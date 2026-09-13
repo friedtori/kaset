@@ -461,9 +461,24 @@ struct MainWindow: View { // swiftlint:disable:this type_body_length
         if let newAccountId {
             self.podcastsAvailability.activateAccount(newAccountId)
         }
-        guard !isInitialScopeResolution else { return }
-
         Task { @MainActor in
+            if isInitialScopeResolution {
+                guard self.authService.hasPersonalAccount,
+                      self.accountService.currentAccountScopeID == newAccountScope
+                else { return }
+
+                // These models also supply like and Library status to other views.
+                // Seed them without restarting Home or an already-visible tab.
+                async let likedMusicLoad: Void? = self.likedMusicViewModel?.ensureLoaded()
+                if let libraryViewModel = self.libraryViewModel,
+                   libraryViewModel.loadingState == .idle
+                {
+                    await libraryViewModel.load()
+                }
+                _ = await likedMusicLoad
+                return
+            }
+
             APICache.shared.invalidateAll()
             URLCache.shared.removeAllCachedResponses()
 
