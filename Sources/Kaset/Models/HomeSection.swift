@@ -194,4 +194,29 @@ enum HomeSectionItem: Identifiable, Hashable {
         }
         return nil
     }
+
+    /// Song equality compares playback identity. Both card implementations also
+    /// need the metadata they render and pass to playback, navigation, and library actions.
+    func hasSameCardContent(as other: Self) -> Bool {
+        guard self == other else { return false }
+        guard case let .song(lhsSong) = self,
+              case let .song(rhsSong) = other
+        else { return true }
+
+        return lhsSong.id == rhsSong.id
+            && lhsSong.title == rhsSong.title
+            && lhsSong.artists == rhsSong.artists
+            && lhsSong.album == rhsSong.album
+            && lhsSong.duration == rhsSong.duration
+            && lhsSong.thumbnailURL == rhsSong.thumbnailURL
+            && lhsSong.isPlayable == rhsSong.isPlayable
+            && lhsSong.hasVideo == rhsSong.hasVideo
+            && lhsSong.musicVideoType == rhsSong.musicVideoType
+            && lhsSong.likeStatus == rhsSong.likeStatus
+            && lhsSong.isInLibrary == rhsSong.isInLibrary
+            && lhsSong.feedbackTokens == rhsSong.feedbackTokens
+            && lhsSong.isExplicit == rhsSong.isExplicit
+            && lhsSong.playlistSetVideoId == rhsSong.playlistSetVideoId
+            && lhsSong.audioTrackVideoId == rhsSong.audioTrackVideoId
+    }
 }

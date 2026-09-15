@@ -8,6 +8,7 @@ struct HomeSectionItemCard: View, Equatable {
     let rank: Int?
     let playAction: (() -> Void)?
     let action: () -> Void
+    private let hasPlayAction: Bool
     @Environment(AuthService.self) private var authService
 
     /// Card dimensions.
@@ -29,6 +30,7 @@ struct HomeSectionItemCard: View, Equatable {
         self.rank = rank
         self.playAction = playAction
         self.action = action
+        self.hasPlayAction = playAction != nil
     }
 
     /// Lets SwiftUI skip re-evaluating unchanged cards when a shelf or its
@@ -38,9 +40,9 @@ struct HomeSectionItemCard: View, Equatable {
     /// (and `rank`). If two cards compare equal, the old closures are kept, so
     /// an action that captured section membership or index would go stale.
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.item == rhs.item
+        lhs.item.hasSameCardContent(as: rhs.item)
             && lhs.rank == rhs.rank
-            && (lhs.playAction == nil) == (rhs.playAction == nil)
+            && lhs.hasPlayAction == rhs.hasPlayAction
     }
 
     var body: some View {
@@ -133,11 +135,8 @@ struct HomeSectionItemCard: View, Equatable {
         }
         .frame(width: self.thumbnailSize.width, height: self.thumbnailSize.height)
         .clipShape(.rect(cornerRadius: 8))
-        // Hover lift is applied to the thumbnail only, and the shadow node only
-        // exists while hovering. Scaling the whole card re-rasterized its title
-        // and subtitle on every frame of the spring, and a resident `.shadow`
-        // (even clear) kept an effect layer on every card; measured together
-        // at ~5% of the app's scroll-time CPU and ~15% of dropped frames.
+        // Lift only the thumbnail and add its shadow on hover while preserving
+        // the loaded image's identity.
         .modifier(ThumbnailHoverLift(isHovering: self.isHovering))
         .overlay {
             // Play overlay on hover (for songs)
@@ -157,7 +156,7 @@ struct HomeSectionItemCard: View, Equatable {
 
     private var supportsPlaylistPlayAction: Bool {
         guard case .playlist = self.item else { return false }
-        return self.playAction != nil
+        return self.hasPlayAction
     }
 
     @ViewBuilder
@@ -322,18 +321,19 @@ private struct ThumbnailHoverLift: ViewModifier {
     let isHovering: Bool
 
     func body(content: Content) -> some View {
-        self.shadowed(content)
+        content
+            .background {
+                // Keep the stateful image outside the conditional branch.
+                if self.isHovering {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.black.opacity(0.15))
+                        .blur(radius: 12)
+                        .offset(y: 4)
+                        .allowsHitTesting(false)
+                }
+            }
             .scaleEffect(self.isHovering ? 1.02 : 1)
             .animation(AppAnimation.spring, value: self.isHovering)
-    }
-
-    @ViewBuilder
-    private func shadowed(_ content: Content) -> some View {
-        if self.isHovering {
-            content.shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
-        } else {
-            content
-        }
     }
 }
 

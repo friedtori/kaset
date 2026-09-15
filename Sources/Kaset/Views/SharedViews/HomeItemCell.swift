@@ -201,9 +201,14 @@ final class HomeItemCell: NSView {
         playlistPlayAction: (() -> Void)?,
         environment: EnvironmentValues
     ) {
+        let hasSamePlayAction = (self.playlistPlayAction == nil) == (playlistPlayAction == nil)
         self.environment = environment
         self.playlistPlayAction = playlistPlayAction
-        if self.item == item, self.rank == rank, self.allowsLikeActions == allowsLikeActions {
+        if self.item?.hasSameCardContent(as: item) == true,
+           self.rank == rank,
+           self.allowsLikeActions == allowsLikeActions,
+           hasSamePlayAction
+        {
             // The hosted overlay carries the forwarded environment; keep it
             // current if it is showing.
             if self.isHovered {

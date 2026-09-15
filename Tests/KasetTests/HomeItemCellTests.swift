@@ -83,4 +83,36 @@ struct HomeItemCellTests {
         #expect(cell.isHovered)
         #expect(cell.item == item)
     }
+
+    @Test("Refreshing the same song updates the native card's metadata")
+    func reconfigureSongMetadata() {
+        let original = HomeSectionItem.song(Self.song(title: "Original", artists: "Artist"))
+        let updated = HomeSectionItem.song(Self.song(title: "Updated", artists: "Band", isExplicit: true))
+        let cell = HomeItemCell(frame: .zero)
+        cell.configure(item: original, rank: nil, allowsLikeActions: false, playlistPlayAction: nil, environment: EnvironmentValues())
+        cell.setHovered(true, animated: false)
+
+        cell.configure(item: updated, rank: nil, allowsLikeActions: false, playlistPlayAction: nil, environment: EnvironmentValues())
+
+        #expect(cell.item?.title == "Updated")
+        #expect(cell.isHovered)
+        let label = cell.accessibilityLabel() ?? ""
+        #expect(label.contains("Updated"))
+        #expect(label.contains("Band"))
+        #expect(label.contains("Explicit"))
+    }
+
+    @Test("Changing playlist play availability updates native accessibility actions")
+    func reconfigurePlaylistPlayAction() {
+        let item = HomeSectionItem.playlist(Playlist(id: "playlist", title: "Playlist", description: nil, thumbnailURL: nil, trackCount: nil))
+        let cell = HomeItemCell(frame: .zero)
+        cell.configure(item: item, rank: nil, allowsLikeActions: false, playlistPlayAction: nil, environment: EnvironmentValues())
+        #expect(cell.accessibilityCustomActions()?.isEmpty == true)
+
+        cell.configure(item: item, rank: nil, allowsLikeActions: false, playlistPlayAction: {}, environment: EnvironmentValues())
+        #expect(cell.accessibilityCustomActions()?.count == 1)
+
+        cell.configure(item: item, rank: nil, allowsLikeActions: false, playlistPlayAction: nil, environment: EnvironmentValues())
+        #expect(cell.accessibilityCustomActions()?.isEmpty == true)
+    }
 }
