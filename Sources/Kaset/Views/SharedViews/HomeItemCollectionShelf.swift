@@ -207,6 +207,13 @@ final class HomeItemShelfView: NSObject {
     private var overflow = CarouselShelfOverflow()
     private var hoveredIndex: Int?
     private var observers: [NSObjectProtocol] = []
+    private var layoutViewportWidth: CGFloat = 0
+    private var scrollOffsetFromLeading: CGFloat = 0
+    private var isLayingOutCells = false
+
+    private var isRightToLeft: Bool {
+        self.configuration.environment.layoutDirection == .rightToLeft
+    }
 
     init(contentInset: CGFloat) {
         self.contentInset = contentInset
@@ -234,6 +241,8 @@ final class HomeItemShelfView: NSObject {
         self.scrollView.usesPredominantAxisScrolling = true
         self.scrollView.drawsBackground = false
         self.scrollView.contentView.postsBoundsChangedNotifications = true
+        // A resize can change the frame without posting a bounds notification.
+        self.scrollView.contentView.postsFrameChangedNotifications = true
     }
 
     /// Scroll observers live only while the shelf is installed. SwiftUI
@@ -242,19 +251,22 @@ final class HomeItemShelfView: NSObject {
     func installObservers() {
         guard self.observers.isEmpty else { return }
         self.observers = [
+            NSView.boundsDidChangeNotification,
+            NSView.frameDidChangeNotification,
+        ].map { name in
             NotificationCenter.default.addObserver(
-                forName: NSView.boundsDidChangeNotification,
+                forName: name,
                 object: self.scrollView.contentView,
                 queue: nil
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.updateOverflow()
-                    self?.refreshHoverFromMouseLocation()
+                    self?.scrollGeometryDidChange()
                 }
-            },
-        ]
-        self.updateOverflow()
+            }
+        }
+        self.scrollGeometryDidChange()
         self.observeLikeStatus()
+        self.pushLikedState()
     }
 
     func removeObservers() {
@@ -276,9 +288,14 @@ final class HomeItemShelfView: NSObject {
         // Card widths depend on item metadata, so a same-ID item that gains or
         // loses video mode is a layout change too.
         let layoutKey = { (items: [HomeSectionItem]) in items.map { "\($0.id)@\(HomeItemCell.width(for: $0))" } }
+        let directionChanged = self.configuration.environment.layoutDirection != configuration.environment.layoutDirection
         let structureChanged = layoutKey(self.configuration.items) != layoutKey(configuration.items)
             || self.configuration.isChart != configuration.isChart
+            || directionChanged
         self.configuration = configuration
+        if directionChanged {
+            self.scrollOffsetFromLeading = 0
+        }
         if structureChanged {
             self.rebuildCells()
         } else {
@@ -302,15 +319,8 @@ final class HomeItemShelfView: NSObject {
             self.cells.append(cell)
         }
         self.configureCells()
-        var x = self.contentInset
-        for (index, item) in items.enumerated() {
-            let width = HomeItemCell.width(for: item)
-            self.cells[index].frame = NSRect(x: x, y: 0, width: width, height: HomeItemCell.height)
-            x += width + Self.itemSpacing
-        }
-        let contentWidth = items.isEmpty ? 0 : x - Self.itemSpacing + self.contentInset
-        self.documentView.frame = NSRect(x: 0, y: 0, width: contentWidth, height: HomeItemCell.height)
         self.documentView.cells = self.cells
+        self.layoutCells()
         // Drop the previous hover explicitly (the cell may have been retained)
         // and re-resolve it from the pointer for the new layout.
         if let hovered = self.hoveredIndex, hovered < self.cells.count {
@@ -319,6 +329,32 @@ final class HomeItemShelfView: NSObject {
         self.hoveredIndex = nil
         self.updateOverflow()
         self.refreshHoverFromMouseLocation()
+    }
+
+    private func layoutCells() {
+        self.isLayingOutCells = true
+        defer { self.isLayingOutCells = false }
+
+        let clipView = self.scrollView.contentView
+        self.layoutViewportWidth = clipView.bounds.width
+        let widths = self.configuration.items.map { HomeItemCell.width(for: $0) }
+        let contentWidth = widths.isEmpty ? 0 : widths.reduce(0, +)
+            + CGFloat(widths.count - 1) * Self.itemSpacing + 2 * self.contentInset
+        // Fill the viewport so a short RTL shelf still starts at the right inset.
+        let documentWidth = max(contentWidth, self.layoutViewportWidth)
+        var position = self.contentInset
+        for (index, width) in widths.enumerated() {
+            let x = self.isRightToLeft ? documentWidth - position - width : position
+            self.cells[index].frame = NSRect(x: x, y: 0, width: width, height: HomeItemCell.height)
+            position += width + Self.itemSpacing
+        }
+        self.documentView.frame = NSRect(x: 0, y: 0, width: documentWidth, height: HomeItemCell.height)
+
+        let maxX = max(0, documentWidth - self.layoutViewportWidth)
+        self.scrollOffsetFromLeading = min(max(self.scrollOffsetFromLeading, 0), maxX)
+        let x = self.isRightToLeft ? maxX - self.scrollOffsetFromLeading : self.scrollOffsetFromLeading
+        clipView.scroll(to: NSPoint(x: x, y: clipView.bounds.minY))
+        self.scrollView.reflectScrolledClipView(clipView)
     }
 
     private func configureCells() {
@@ -339,8 +375,8 @@ final class HomeItemShelfView: NSObject {
                 return NSHostingMenu(rootView: contextMenu(item, index).environment(\.self, self.configuration.environment))
             }
         }
-        // A new song set arms a fresh observation; an unchanged set re-pushes
-        // the last known state, since `configure` may have reset a card.
+        // Keep the registration for unchanged songs, but resolve their current
+        // metadata fallback even when the manager's cache has not changed.
         self.observeLikeStatus()
         self.pushLikedState()
     }
@@ -374,25 +410,25 @@ final class HomeItemShelfView: NSObject {
         self.observationTick.value += 1
         let manager = SongLikeStatusManager.shared
         guard !songs.isEmpty else { return }
-        let liked = withObservationTracking {
+        withObservationTracking {
             _ = self.observationTick.value
-            return songs.map { manager.isLiked($0.1) }
+            for (_, song) in songs {
+                _ = manager.isLiked(song)
+            }
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self, self.likeObservationGeneration == generation else { return }
                 self.observeLikeStatus(force: true)
+                self.pushLikedState()
             }
         }
-        self.lastLikedBySongID = Dictionary(zip(songs.map(\.1.id), liked), uniquingKeysWith: { _, last in last })
-        self.pushLikedState()
     }
 
-    private var lastLikedBySongID: [String: Bool] = [:]
-
     private func pushLikedState() {
+        let manager = SongLikeStatusManager.shared
         for (index, item) in self.configuration.items.enumerated() where index < self.cells.count {
             guard case let .song(song) = item else { continue }
-            self.cells[index].setLiked(self.lastLikedBySongID[song.id] ?? false)
+            self.cells[index].setLiked(manager.isLiked(song))
         }
     }
 
@@ -427,12 +463,30 @@ final class HomeItemShelfView: NSObject {
 
     // MARK: Overflow + paging
 
+    private func scrollGeometryDidChange() {
+        guard !self.isLayingOutCells else { return }
+        let visible = self.scrollView.contentView.bounds
+        if visible.width != self.layoutViewportWidth {
+            // AppKit may already have clamped the physical origin after a
+            // resize. Preserve the previously recorded distance from leading.
+            self.layoutCells()
+        } else {
+            let maxX = max(0, self.documentView.frame.width - visible.width)
+            let offset = self.isRightToLeft ? maxX - visible.minX : visible.minX
+            self.scrollOffsetFromLeading = min(max(offset, 0), maxX)
+        }
+        self.updateOverflow()
+        self.refreshHoverFromMouseLocation()
+    }
+
     private func updateOverflow() {
         let visible = self.scrollView.contentView.bounds
         let contentWidth = self.documentView.frame.width
+        let left = visible.minX > 1
+        let right = contentWidth - visible.maxX > 1
         let next = CarouselShelfOverflow(
-            leading: visible.minX > 1,
-            trailing: contentWidth - visible.maxX > 1
+            leading: self.isRightToLeft ? right : left,
+            trailing: self.isRightToLeft ? left : right
         )
         guard next != self.overflow else { return }
         self.overflow = next
@@ -450,12 +504,14 @@ final class HomeItemShelfView: NSObject {
         let visible = clipView.bounds
         let contentWidth = self.documentView.frame.width
         let pageWidth = max(1, visible.width * Self.pageFraction)
-        let destination = switch direction {
-        case .leading: visible.minX - pageWidth
-        case .trailing: visible.minX + pageWidth
-        }
         let maxX = max(0, contentWidth - visible.width)
-        let target = NSPoint(x: min(max(destination, 0), maxX), y: visible.minY)
+        let offset = self.isRightToLeft ? maxX - visible.minX : visible.minX
+        let destination = switch direction {
+        case .leading: offset - pageWidth
+        case .trailing: offset + pageWidth
+        }
+        let clamped = min(max(destination, 0), maxX)
+        let target = NSPoint(x: self.isRightToLeft ? maxX - clamped : clamped, y: visible.minY)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.35
@@ -487,6 +543,8 @@ private final class HomeItemShelfDocumentView: NSView {
     var clickHandler: ((Int, Bool) -> Void)?
     var cells: [HomeItemCell] = []
     private var trackingArea: NSTrackingArea?
+    private var scrollsPageForGesture: Bool?
+    private var pendingScrollStartEvents: [NSEvent] = []
 
     private enum PressTarget: Equatable {
         case card(Int)
@@ -530,13 +588,67 @@ private final class HomeItemShelfDocumentView: NSView {
         self.hoverHandler?(nil)
     }
 
-    /// Vertically dominant wheel events belong to the page's vertical scroll
-    /// view; the shelf only consumes horizontal gestures.
+    /// Choose the recipient once per gesture, including its momentum and
+    /// zero-delta end events. Wheel events without phases remain independent.
     override func scrollWheel(with event: NSEvent) {
-        if abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
-           let outer = self.enclosingScrollView?.enclosingScrollView
-        {
-            outer.scrollWheel(with: event)
+        guard let page = self.enclosingScrollView?.enclosingScrollView else {
+            self.scrollsPageForGesture = nil
+            self.pendingScrollStartEvents = []
+            super.scrollWheel(with: event)
+            return
+        }
+        let phase = event.phase
+        let momentum = event.momentumPhase
+        let isVertical = abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX)
+        if phase.isEmpty, momentum.isEmpty {
+            self.scrollsPageForGesture = nil
+            self.pendingScrollStartEvents = []
+            self.routeScrollEvent(event, to: isVertical ? page : nil)
+            return
+        }
+        if phase.contains(.mayBegin) {
+            self.scrollsPageForGesture = nil
+            self.pendingScrollStartEvents = [event]
+            return
+        }
+        if phase.contains(.began) {
+            self.scrollsPageForGesture = nil
+            self.pendingScrollStartEvents.removeAll { !$0.phase.contains(.mayBegin) }
+        }
+
+        let isEnding = !phase.isDisjoint(with: [.ended, .cancelled])
+            || !momentum.isDisjoint(with: [.ended, .cancelled])
+        if self.scrollsPageForGesture == nil {
+            if event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+                self.scrollsPageForGesture = isVertical
+            } else if isEnding {
+                self.scrollsPageForGesture = false
+            } else {
+                // Start events can precede the first movement. Deliver them
+                // to the chosen scroll view before its first nonzero sample.
+                if phase.contains(.began) || momentum.contains(.began) {
+                    self.pendingScrollStartEvents.append(event)
+                }
+                return
+            }
+        }
+        let destination = self.scrollsPageForGesture == true ? page : nil
+        let pending = self.pendingScrollStartEvents
+        self.pendingScrollStartEvents = []
+        for start in pending {
+            self.routeScrollEvent(start, to: destination)
+        }
+        self.routeScrollEvent(event, to: destination)
+        // A physical end can be followed by momentum. Retain the recipient
+        // until momentum finishes or another gesture begins.
+        if phase.contains(.cancelled) || !momentum.isDisjoint(with: [.ended, .cancelled]) {
+            self.scrollsPageForGesture = nil
+        }
+    }
+
+    private func routeScrollEvent(_ event: NSEvent, to page: NSScrollView?) {
+        if let page {
+            page.scrollWheel(with: event)
         } else {
             super.scrollWheel(with: event)
         }

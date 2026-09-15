@@ -110,6 +110,7 @@ struct CarouselShelfPagingControls: ViewModifier {
 
     @State private var isShelfHovering = false
     @FocusState private var focusedDirection: CarouselShelfDirection?
+    @Environment(\.layoutDirection) private var layoutDirection
 
     func body(content: Content) -> some View {
         content
@@ -147,7 +148,7 @@ struct CarouselShelfPagingControls: ViewModifier {
         Button {
             self.page(direction)
         } label: {
-            Image(systemName: direction.systemImage)
+            Image(systemName: direction.isLeft(in: self.layoutDirection) ? "chevron.left" : "chevron.right")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.primary)
                 .frame(width: 38, height: 38)
@@ -169,10 +170,9 @@ struct CarouselShelfPagingControls: ViewModifier {
     }
 
     private func accessibilityLabel(for direction: CarouselShelfDirection) -> String {
-        switch direction {
-        case .leading:
+        if direction.isLeft(in: self.layoutDirection) {
             String(localized: "Scroll \(self.accessibilityLabel) left")
-        case .trailing:
+        } else {
             String(localized: "Scroll \(self.accessibilityLabel) right")
         }
     }
@@ -341,12 +341,7 @@ enum CarouselShelfDirection: Hashable {
     case leading
     case trailing
 
-    var systemImage: String {
-        switch self {
-        case .leading:
-            "chevron.left"
-        case .trailing:
-            "chevron.right"
-        }
+    func isLeft(in layoutDirection: LayoutDirection) -> Bool {
+        (self == .leading) == (layoutDirection == .leftToRight)
     }
 }

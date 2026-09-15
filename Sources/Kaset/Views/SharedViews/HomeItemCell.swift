@@ -46,6 +46,8 @@ final class HomeItemCell: NSView {
     private var environment = EnvironmentValues()
     private var allowsLikeActions = false
     private var isLiked = false
+    private var isLikeFocused = false
+    private var overlayScale: CGFloat = 0
     private(set) var isHovered = false
     private var imageLoadTask: Task<Void, Never>?
 
@@ -78,19 +80,29 @@ final class HomeItemCell: NSView {
     /// Frame of the like control in the view's coordinates, or nil when it is not shown.
     var likeButtonFrame: NSRect? {
         guard self.showsLikeButton, let item else { return nil }
-        let width = Self.width(for: item)
-        return NSRect(
-            x: width - Self.likeButtonInset - Self.likeButtonSize,
+        return self.likeControlFrame(width: Self.width(for: item))
+    }
+
+    private var isRightToLeft: Bool {
+        self.environment.layoutDirection == .rightToLeft
+    }
+
+    private func likeControlFrame(width: CGFloat) -> NSRect {
+        NSRect(
+            x: self.isRightToLeft ? Self.likeButtonInset : width - Self.likeButtonInset - Self.likeButtonSize,
             y: Self.likeButtonInset,
             width: Self.likeButtonSize,
             height: Self.likeButtonSize
         )
     }
 
-    private var showsLikeButton: Bool {
+    private var supportsLikeAction: Bool {
         guard let item, case .song = item else { return false }
-        guard self.allowsLikeActions else { return false }
-        return self.isLiked || self.isHovered
+        return self.allowsLikeActions
+    }
+
+    private var showsLikeButton: Bool {
+        self.supportsLikeAction && (self.isLiked || self.isHovered || self.isLikeFocused)
     }
 
     override func layout() {
@@ -102,43 +114,52 @@ final class HomeItemCell: NSView {
         CATransaction.setDisableActions(true)
         self.artwork.layout(in: NSRect(x: 0, y: 0, width: width, height: Self.artworkHeight), scale: scale)
         // Flipped view: layer frames are in the view's (top-left origin) space.
-        self.likeLayer.frame = NSRect(
-            x: width - Self.likeButtonInset - Self.likeButtonSize,
-            y: Self.likeButtonInset,
-            width: Self.likeButtonSize,
-            height: Self.likeButtonSize
-        )
-        self.likeLayer.contentsScale = scale
+        self.likeLayer.frame = self.likeControlFrame(width: width)
         // Mirrors the SwiftUI card: leading 8, 60pt above the card's bottom.
-        self.rankLayer.frame = NSRect(x: 8, y: 0, width: width - 8, height: Self.height - 60)
-        self.rankLayer.contentsScale = scale
+        self.rankLayer.frame = NSRect(x: self.isRightToLeft ? 0 : 8, y: 0, width: width - 8, height: Self.height - 60)
+        self.rankLayer.contentsGravity = self.isRightToLeft ? .topRight : .topLeft
+        if self.overlayScale != scale {
+            self.updateOverlayLayers()
+        }
         CATransaction.commit()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        self.needsLayout = true
+        self.needsDisplay = true
     }
 
     private func updateOverlayLayers() {
+        let scale = self.window?.backingScaleFactor ?? 2
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        if self.showsLikeButton {
-            self.likeLayer.contents = self.likeImage(liked: self.isLiked)
-            self.likeLayer.isHidden = false
-        } else {
-            self.likeLayer.isHidden = true
+        self.effectiveAppearance.performAsCurrentDrawingAppearance {
+            if self.showsLikeButton {
+                self.likeLayer.contents = self.likeImage(liked: self.isLiked, scale: scale)
+                self.likeLayer.isHidden = false
+            } else {
+                self.likeLayer.isHidden = true
+            }
+            if let rank {
+                self.rankLayer.contents = Self.rankImage(rank, scale: scale, isRightToLeft: self.isRightToLeft)
+                self.rankLayer.isHidden = false
+            } else {
+                self.rankLayer.isHidden = true
+            }
         }
-        if let rank {
-            self.rankLayer.contents = self.effectiveAppearance.performAsCurrentDrawingAppearance { Self.rankImage(rank) }
-            self.rankLayer.isHidden = false
-        } else {
-            self.rankLayer.isHidden = true
-        }
+        self.likeLayer.contentsScale = scale
+        self.rankLayer.contentsScale = scale
+        self.overlayScale = scale
         CATransaction.commit()
     }
 
-    /// Keyed by liked state and appearance name: the unliked glyph uses a
-    /// dynamic system color that resolves differently in light and dark.
+    /// The unliked glyph resolves a dynamic color; bitmap resolution must also
+    /// match the destination layer's backing scale.
     private static var likeImages: [String: CGImage] = [:]
 
-    private func likeImage(liked: Bool) -> CGImage? {
-        let key = "\(liked)-\(self.effectiveAppearance.name.rawValue)"
+    private func likeImage(liked: Bool, scale: CGFloat) -> CGImage? {
+        let key = "\(liked)-\(self.effectiveAppearance.name.rawValue)-\(scale)"
         if let cached = Self.likeImages[key] {
             return cached
         }
@@ -148,14 +169,12 @@ final class HomeItemCell: NSView {
         guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) else {
             return nil
         }
-        let rendered = NSImage(size: NSSize(width: Self.likeButtonSize, height: Self.likeButtonSize), flipped: false) { rect in
+        let rendered = HomeItemLayerImage.render(size: NSSize(width: Self.likeButtonSize, height: Self.likeButtonSize), scale: scale) { rect in
             let size = image.size
             image.draw(in: NSRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height))
-            return true
         }
-        let cgImage = rendered.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        Self.likeImages[key] = cgImage
-        return cgImage
+        Self.likeImages[key] = rendered
+        return rendered
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -169,7 +188,7 @@ final class HomeItemCell: NSView {
         self.updateOverlayLayers()
     }
 
-    private static func rankImage(_ rank: Int) -> CGImage? {
+    private static func rankImage(_ rank: Int, scale: CGFloat, isRightToLeft: Bool) -> CGImage? {
         let shadow = NSShadow()
         shadow.shadowColor = NSColor.windowBackgroundColor.withAlphaComponent(0.8)
         shadow.shadowBlurRadius = 4
@@ -181,11 +200,9 @@ final class HomeItemCell: NSView {
         ])
         let size = string.size()
         let padded = NSSize(width: ceil(size.width) + 8, height: ceil(size.height) + 8)
-        let rendered = NSImage(size: padded, flipped: false) { _ in
-            string.draw(at: NSPoint(x: 0, y: 4))
-            return true
+        return HomeItemLayerImage.render(size: padded, scale: scale) { _ in
+            string.draw(at: NSPoint(x: isRightToLeft ? 8 : 0, y: 4))
         }
-        return rendered.cgImage(forProposedRect: nil, context: nil, hints: nil)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -202,8 +219,15 @@ final class HomeItemCell: NSView {
         environment: EnvironmentValues
     ) {
         let hasSamePlayAction = (self.playlistPlayAction == nil) == (playlistPlayAction == nil)
+        let directionChanged = self.environment.layoutDirection != environment.layoutDirection
         self.environment = environment
         self.playlistPlayAction = playlistPlayAction
+        if directionChanged {
+            self.needsLayout = true
+            self.needsDisplay = true
+            self.updateOverlayLayers()
+            self.noteFocusRingMaskChanged()
+        }
         if self.item?.hasSameCardContent(as: item) == true,
            self.rank == rank,
            self.allowsLikeActions == allowsLikeActions,
@@ -220,6 +244,7 @@ final class HomeItemCell: NSView {
         self.item = item
         self.rank = rank
         self.allowsLikeActions = allowsLikeActions
+        self.setLikeFocused(self.isLikeFocused)
         self.imageLoadTask?.cancel()
         self.imageLoadTask = nil
 
@@ -288,7 +313,23 @@ final class HomeItemCell: NSView {
         NSApp.isFullKeyboardAccessEnabled
     }
 
+    override func becomeFirstResponder() -> Bool {
+        guard super.becomeFirstResponder() else { return false }
+        self.setLikeFocused(self.window?.keyViewSelectionDirection == .selectingPrevious)
+        self.scrollToVisible(self.bounds)
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        guard super.resignFirstResponder() else { return false }
+        self.setLikeFocused(false)
+        return true
+    }
+
     override var focusRingMaskBounds: NSRect {
+        if self.isLikeFocused, let likeButtonFrame {
+            return likeButtonFrame
+        }
         guard let item else { return .zero }
         return NSRect(x: 0, y: 0, width: Self.width(for: item), height: Self.artworkHeight)
     }
@@ -297,13 +338,58 @@ final class HomeItemCell: NSView {
         NSBezierPath(roundedRect: self.focusRingMaskBounds, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius).fill()
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard self.window?.firstResponder === self, event.keyCode == 49,
+              event.modifierFlags.isDisjoint(with: [.command, .control, .option, .shift])
+        else { return super.performKeyEquivalent(with: event) }
+        // Focused controls handle Space before the app's Play/Pause shortcut.
+        self.keyDown(with: event)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
+        if event.keyCode == 48, event.modifierFlags.isDisjoint(with: [.command, .control, .option]) {
+            self.moveKeyboardFocus(backwards: event.modifierFlags.contains(.shift))
+            return
+        }
         switch event.keyCode {
         case 36, 76, 49: // Return, Enter, Space
-            self.activateAction?()
+            if self.isLikeFocused {
+                self.likeAction?()
+            } else {
+                self.activateAction?()
+            }
         default:
             super.keyDown(with: event)
         }
+    }
+
+    /// Two keyboard targets share the card's single view. Tab visits the like
+    /// control before moving to the next card; Shift-Tab reverses that order.
+    private func moveKeyboardFocus(backwards: Bool) {
+        if backwards {
+            if self.isLikeFocused {
+                self.setLikeFocused(false)
+            } else {
+                self.window?.selectPreviousKeyView(self)
+                if self.window?.firstResponder === self {
+                    self.setLikeFocused(true)
+                }
+            }
+        } else if self.supportsLikeAction, !self.isLikeFocused {
+            self.setLikeFocused(true)
+        } else {
+            self.setLikeFocused(false)
+            self.window?.selectNextKeyView(self)
+        }
+    }
+
+    private func setLikeFocused(_ focused: Bool) {
+        let focused = focused && self.supportsLikeAction
+        guard focused != self.isLikeFocused else { return }
+        self.isLikeFocused = focused
+        self.updateOverlayLayers()
+        self.noteFocusRingMaskChanged()
     }
 
     private var isExplicit: Bool {
@@ -328,7 +414,7 @@ final class HomeItemCell: NSView {
             for url in urls {
                 if let image = await ImageCache.shared.image(for: url, targetSize: targetSize) {
                     guard !Task.isCancelled, let self, self.item?.id == itemID else { return }
-                    self.artwork.setImage(image, animated: true)
+                    self.artwork.setImage(image, animated: !self.environment.accessibilityReduceMotion)
                     return
                 }
                 if Task.isCancelled {
@@ -387,7 +473,8 @@ final class HomeItemCell: NSView {
     /// while this card is hovered, so at most one such view exists per shelf.
     private func updatePlayOverlay() {
         guard let item, case .song = item, self.isHovered else {
-            self.playOverlay?.isHidden = true
+            self.playOverlay?.removeFromSuperview()
+            self.playOverlay = nil
             return
         }
         let root = AnyView(
@@ -399,7 +486,6 @@ final class HomeItemCell: NSView {
         if let playOverlay {
             playOverlay.rootView = root
             playOverlay.frame = frame
-            playOverlay.isHidden = false
         } else {
             let overlay = NSHostingView(rootView: root)
             overlay.sizingOptions = []
@@ -432,8 +518,10 @@ final class HomeItemCell: NSView {
         // ellipsis on line two; a tail-truncating paragraph would force one line.
         let wrapping = NSMutableParagraphStyle()
         wrapping.lineBreakMode = .byWordWrapping
+        wrapping.alignment = self.isRightToLeft ? .right : .left
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.alignment = wrapping.alignment
         let title = NSAttributedString(string: item.title, attributes: [
             .font: Self.titleFont,
             .foregroundColor: NSColor.labelColor,
@@ -444,11 +532,15 @@ final class HomeItemCell: NSView {
             with: NSSize(width: titleMaxWidth, height: titleLineHeight * 2),
             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
         )
-        let titleRect = NSRect(x: 0, y: textTop, width: titleMaxWidth, height: min(ceil(titleBounds.height), titleLineHeight * 2))
+        let titleRect = NSRect(
+            x: self.isRightToLeft ? width - titleMaxWidth : 0,
+            y: textTop, width: titleMaxWidth, height: min(ceil(titleBounds.height), titleLineHeight * 2)
+        )
         title.draw(with: titleRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
 
         if isExplicit {
-            let badgeX = min(ceil(titleBounds.width), titleMaxWidth) + 6
+            let titleWidth = min(ceil(titleBounds.width), titleMaxWidth)
+            let badgeX = self.isRightToLeft ? width - titleWidth - 6 - badgeSize : titleWidth + 6
             let badgeRect = NSRect(x: badgeX, y: textTop + (titleLineHeight - badgeSize) / 2, width: badgeSize, height: badgeSize)
             NSColor.secondaryLabelColor.setFill()
             NSBezierPath(roundedRect: badgeRect, xRadius: 2.5, yRadius: 2.5).fill()
@@ -490,6 +582,7 @@ private final class HomeItemArtworkLayers {
     private let gradientLayer = CAGradientLayer()
     private let iconLayer = CALayer()
     private let imageLayer = CALayer()
+    private var placeholderSymbolName: String?
 
     init() {
         self.liftLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
@@ -503,6 +596,7 @@ private final class HomeItemArtworkLayers {
         self.gradientLayer.startPoint = CGPoint(x: 0, y: 0)
         self.gradientLayer.endPoint = CGPoint(x: 1, y: 1)
         self.iconLayer.contentsGravity = .center
+        self.iconLayer.contentsScale = 2
         self.imageLayer.contentsGravity = .resizeAspectFill
         self.contentLayer.addSublayer(self.gradientLayer)
         self.contentLayer.addSublayer(self.iconLayer)
@@ -521,7 +615,12 @@ private final class HomeItemArtworkLayers {
         self.imageLayer.frame = bounds
         self.iconLayer.frame = bounds
         self.imageLayer.contentsScale = scale
-        self.iconLayer.contentsScale = scale
+        if self.iconLayer.contentsScale != scale {
+            self.iconLayer.contentsScale = scale
+            if let placeholderSymbolName {
+                self.iconLayer.contents = Self.placeholderIcon(named: placeholderSymbolName, scale: scale)
+            }
+        }
         self.liftLayer.shadowPath = CGPath(
             roundedRect: bounds,
             cornerWidth: HomeItemCell.cornerRadius,
@@ -545,7 +644,9 @@ private final class HomeItemArtworkLayers {
             self.imageLayer.contentsGravity = .resizeAspectFill
             self.gradientLayer.colors = Self.placeholderColors(for: item).map(\.cgColor)
         }
-        self.iconLayer.contents = Self.placeholderIcon(named: Self.placeholderSymbol(for: item))
+        let symbol = Self.placeholderSymbol(for: item)
+        self.placeholderSymbolName = symbol
+        self.iconLayer.contents = Self.placeholderIcon(named: symbol, scale: self.iconLayer.contentsScale)
         self.iconLayer.isHidden = false
         CATransaction.commit()
     }
@@ -566,7 +667,8 @@ private final class HomeItemArtworkLayers {
         self.imageLayer.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
         self.imageLayer.isHidden = false
         self.iconLayer.isHidden = true
-        self.gradientLayer.isHidden = true
+        // Aspect-fitted video artwork still needs its backdrop in the margins.
+        self.gradientLayer.isHidden = self.imageLayer.contentsGravity != .resizeAspect
         CATransaction.commit()
         guard animated else { return }
         // Match the SwiftUI card's crossfade on a fresh load.
@@ -626,25 +728,47 @@ private final class HomeItemArtworkLayers {
         ]
     }
 
-    /// Tinted symbol bitmaps, rendered once per symbol.
+    /// Tinted symbol bitmaps, rendered once per symbol and backing scale.
     private static var placeholderIcons: [String: CGImage] = [:]
 
-    private static func placeholderIcon(named symbol: String) -> CGImage? {
-        if let cached = self.placeholderIcons[symbol] {
+    private static func placeholderIcon(named symbol: String, scale: CGFloat) -> CGImage? {
+        let key = "\(symbol)-\(scale)"
+        if let cached = self.placeholderIcons[key] {
             return cached
         }
         let config = NSImage.SymbolConfiguration(pointSize: 36, weight: .regular)
         guard let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(config) else {
             return nil
         }
-        let tinted = NSImage(size: icon.size, flipped: false) { rect in
+        let tinted = HomeItemLayerImage.render(size: icon.size, scale: scale) { rect in
             icon.draw(in: rect)
             NSColor.white.withAlphaComponent(0.8).set()
             rect.fill(using: .sourceAtop)
-            return true
         }
-        guard let image = tinted.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        self.placeholderIcons[symbol] = image
-        return image
+        self.placeholderIcons[key] = tinted
+        return tinted
+    }
+}
+
+// MARK: - HomeItemLayerImage
+
+@MainActor
+private enum HomeItemLayerImage {
+    /// Produces a bitmap with an explicit pixels-per-point ratio for CALayer.
+    static func render(size: NSSize, scale: CGFloat, draw: (NSRect) -> Void) -> CGImage? {
+        let bounds = NSRect(x: 0, y: 0, width: ceil(size.width), height: ceil(size.height))
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil, width: Int(bounds.width * scale), height: Int(bounds.height * scale),
+                  bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        draw(bounds)
+        return context.makeImage()
     }
 }
