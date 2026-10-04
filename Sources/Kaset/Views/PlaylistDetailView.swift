@@ -299,6 +299,18 @@ struct PlaylistDetailView: View {
             }
         }
 
+        // Rows near the end only trigger pagination on appear. If they were already
+        // on screen when an in-place reload finished, nothing re-fires; this sentinel
+        // is realized only near the end and resumes paging after that reload. It reacts
+        // to `.loading -> .loaded` only, never to a page settling, so a failing
+        // continuation (`.loadingMore -> .loaded`) cannot turn into a retry loop.
+        Color.clear
+            .frame(height: 0)
+            .onChange(of: self.viewModel.loadingState) { oldState, newState in
+                guard oldState == .loading, newState == .loaded, self.viewModel.hasMore else { return }
+                Task { await self.viewModel.loadMore() }
+            }
+
         // Loading indicator for pagination
         if self.viewModel.loadingState == .loadingMore {
             HStack {
