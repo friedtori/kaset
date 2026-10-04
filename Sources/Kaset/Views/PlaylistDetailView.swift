@@ -145,23 +145,25 @@ struct PlaylistDetailView: View {
     }
 
     private func contentView(_ detail: PlaylistDetail) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                // Header
+        let fallbackAlbum = Album(
+            id: detail.id,
+            title: detail.title,
+            artists: detail.author.map { [$0] },
+            thumbnailURL: detail.thumbnailURL,
+            year: nil,
+            trackCount: detail.trackCount ?? detail.tracks.count
+        )
+        return ScrollView {
+            // One lazy stack as the scroll view's direct content: wrapping a LazyVStack
+            // in a VStack made every layout pass size the whole track list.
+            LazyVStack(alignment: .leading, spacing: 0) {
                 self.headerView(detail)
+                    .padding(.bottom, 24)
 
                 Divider()
+                    .padding(.bottom, 24)
 
-                // Tracks
-                let fallbackAlbum = Album(
-                    id: detail.id,
-                    title: detail.title,
-                    artists: detail.author.map { [$0] },
-                    thumbnailURL: detail.thumbnailURL,
-                    year: nil,
-                    trackCount: detail.trackCount ?? detail.tracks.count
-                )
-                self.tracksView(
+                self.trackRows(
                     detail.tracks, isAlbum: detail.isAlbum, author: detail.author?.name,
                     fallbackAlbum: fallbackAlbum
                 )
@@ -173,6 +175,10 @@ struct PlaylistDetailView: View {
         // (which ignores the safe area) refracts through it.
         .contentMargins(.horizontal, DetailContentLayout.horizontalInset, for: .scrollContent)
         .topFade(style: .contentMask)
+        // The window recomputes its minimum size on every layout pass, and without a
+        // flexible frame that query measured the scroll content — a cost that grew
+        // with every loaded page of tracks.
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
     }
 
     private func headerView(_ detail: PlaylistDetail) -> some View {
@@ -265,43 +271,42 @@ struct PlaylistDetailView: View {
         return detail.isAlbum ? String(localized: "Album") : String(localized: "Playlist")
     }
 
-    private func tracksView(
+    @ViewBuilder
+    private func trackRows(
         _ tracks: [Song], isAlbum: Bool, author: String?, fallbackAlbum: Album? = nil
     ) -> some View {
-        LazyVStack(spacing: 0) {
-            ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
-                // Row and divider form one lazy-stack element: as siblings they doubled
-                // the subviews the stack places and re-realizes while scrolling.
-                VStack(spacing: 0) {
-                    self.trackRow(
-                        track, index: index, tracks: tracks, isAlbum: isAlbum, author: author,
-                        fallbackAlbum: fallbackAlbum
-                    )
+        ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
+            // Row and divider form one lazy-stack element: as siblings they doubled
+            // the subviews the stack places and re-realizes while scrolling.
+            VStack(spacing: 0) {
+                self.trackRow(
+                    track, index: index, tracks: tracks, isAlbum: isAlbum, author: author,
+                    fallbackAlbum: fallbackAlbum
+                )
 
-                    if index < tracks.count - 1 {
-                        Divider()
-                            // For albums: 28 (index) + 12 (spacing)
-                            // For playlists: 28 (index) + 12 (spacing) + 40 (thumbnail) + 16 (spacing)
-                            .padding(.leading, isAlbum ? 40 : 96)
-                    }
-                }
-                .onAppear {
-                    // Load more when reaching the last few items
-                    if index >= tracks.count - 3, self.viewModel.hasMore {
-                        Task { await self.viewModel.loadMore() }
-                    }
+                if index < tracks.count - 1 {
+                    Divider()
+                        // For albums: 28 (index) + 12 (spacing)
+                        // For playlists: 28 (index) + 12 (spacing) + 40 (thumbnail) + 16 (spacing)
+                        .padding(.leading, isAlbum ? 40 : 96)
                 }
             }
-
-            // Loading indicator for pagination
-            if self.viewModel.loadingState == .loadingMore {
-                HStack {
-                    Spacer()
-                    ProgressView()
-                        .controlSize(.small)
-                        .padding()
-                    Spacer()
+            .onAppear {
+                // Load more when reaching the last few items
+                if index >= tracks.count - 3, self.viewModel.hasMore {
+                    Task { await self.viewModel.loadMore() }
                 }
+            }
+        }
+
+        // Loading indicator for pagination
+        if self.viewModel.loadingState == .loadingMore {
+            HStack {
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+                    .padding()
+                Spacer()
             }
         }
     }
