@@ -10,8 +10,10 @@ import SwiftUI
 ///
 /// The button delegates to `SongActionsHelper.likeSong/unlikeSong` — the same
 /// path used by `LikeDislikeContextMenu`. Tap events do not propagate to the
-/// surrounding row button (`.buttonStyle(.borderless)` plus `.contentShape`
-/// on a tight frame keeps the hit area local).
+/// surrounding row button (its own button plus `.contentShape` on a tight
+/// frame keeps the hit area local). `.plain` rather than `.borderless`:
+/// borderless buttons are AppKit-backed, and one platform view per track row
+/// made long playlists drop frames while scrolling.
 struct LikeButton: View {
     let song: Song
     let isRowHovered: Bool
@@ -36,7 +38,7 @@ struct LikeButton: View {
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .disabled(!self.allowsActions)
             .opacity(isLiked || self.isRowHovered ? 1 : 0)
             .animation(.easeInOut(duration: 0.12), value: isLiked)
