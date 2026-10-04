@@ -555,8 +555,10 @@ final class HomeItemCell: NSView {
             self.effectiveAppearance.performAsCurrentDrawingAppearance {
                 // Only the band below the artwork holds text.
                 let size = NSSize(width: width, height: Self.height - Self.artworkHeight)
-                // Every text color here is a neutral gray, so gray + alpha is lossless.
-                rendered = HomeItemLayerImage.render(size: size, scale: scale, flipped: true, grayscale: true) { _ in
+                // Every color `drawText` sets is a neutral gray, so gray + alpha
+                // is lossless, except for color emoji in YouTube titles.
+                let grayscale = !Self.mayContainColorGlyphs(item.title + (item.homeCardSubtitle ?? ""))
+                rendered = HomeItemLayerImage.render(size: size, scale: scale, flipped: true, grayscale: grayscale) { _ in
                     NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -Self.artworkHeight)
                     Self.drawText(for: item, width: width, isExplicit: isExplicit, isRightToLeft: isRightToLeft)
                 }
@@ -571,6 +573,12 @@ final class HomeItemCell: NSView {
         self.textLayer.contents = image
         self.textLayer.contentsScale = scale
         CATransaction.commit()
+    }
+
+    /// Emoji-presentation characters, or any character followed by the emoji
+    /// variation selector, draw as color glyphs.
+    static func mayContainColorGlyphs(_ text: String) -> Bool {
+        text.unicodeScalars.contains { $0.properties.isEmojiPresentation || $0.value == 0xFE0F }
     }
 
     /// Rendered text bitmaps shared across cells, so a shelf that SwiftUI

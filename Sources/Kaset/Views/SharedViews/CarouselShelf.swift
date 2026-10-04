@@ -97,9 +97,6 @@ struct CarouselShelf<Content: View>: View {
 
 // MARK: - ShelfHoverTracking
 
-/// The glass paging arrows, their hover/focus prominence, and the shelf's
-/// accessibility container. Shared by the SwiftUI ``CarouselShelf`` and the
-/// AppKit-backed ``HomeItemCollectionShelf``.
 /// Adds `.onHover` only when enabled. Each call site passes a constant, so
 /// the branch never flips and the content keeps its identity.
 private struct ShelfHoverTracking: ViewModifier {
@@ -117,6 +114,9 @@ private struct ShelfHoverTracking: ViewModifier {
 
 // MARK: - CarouselShelfPagingControls
 
+/// The glass paging arrows, their hover/focus prominence, and the shelf's
+/// accessibility container. Shared by the SwiftUI ``CarouselShelf`` and the
+/// AppKit-backed ``HomeItemCollectionShelf``.
 struct CarouselShelfPagingControls: ViewModifier {
     let accessibilityLabel: String
     let showsLeading: Bool

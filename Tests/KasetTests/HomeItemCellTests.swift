@@ -25,6 +25,15 @@ struct HomeItemCellTests {
         )
     }
 
+    @Test("Text with color emoji opts out of the grayscale text bitmap")
+    func colorGlyphDetection() {
+        #expect(HomeItemCell.mayContainColorGlyphs("Summer 🌴"))
+        #expect(HomeItemCell.mayContainColorGlyphs("Sunny \u{2600}\u{FE0F}"))
+        #expect(!HomeItemCell.mayContainColorGlyphs("Hot Hits"))
+        #expect(!HomeItemCell.mayContainColorGlyphs("#1 Hits © 2026"))
+        #expect(!HomeItemCell.mayContainColorGlyphs("Ça va ♥"))
+    }
+
     @Test("Video songs render wide, everything else square")
     func widthFollowsVideoMode() {
         #expect(HomeItemCell.width(for: .song(Self.song())) == HomeItemCell.squareWidth)

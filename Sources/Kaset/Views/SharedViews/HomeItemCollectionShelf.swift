@@ -234,10 +234,16 @@ final class HomeItemShelfView: NSObject {
         self.documentView.hoverHandler = { [weak self] point in
             guard let self else { return }
             self.updateHover(at: point)
-            let inside = point != nil
-            if inside != self.isPointerInside {
-                self.isPointerInside = inside
-                self.onHoverChange?(inside)
+            self.setPointerInside(point != nil)
+        }
+        self.documentView.windowHandler = { [weak self] hasWindow in
+            guard let self else { return }
+            if hasWindow {
+                self.refreshHoverFromMouseLocation()
+            } else {
+                // A shelf detached while hovered never receives `mouseExited`.
+                self.updateHover(at: nil)
+                self.setPointerInside(false)
             }
         }
         self.documentView.clickHandler = { [weak self] index, isLikeControl in
@@ -476,7 +482,20 @@ final class HomeItemShelfView: NSObject {
     private func refreshHoverFromMouseLocation() {
         guard let window = self.scrollView.window else { return }
         let point = self.documentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        self.updateHover(at: self.documentView.visibleRect.contains(point) ? point : nil)
+        let inside = self.documentView.visibleRect.contains(point)
+        self.updateHover(at: inside ? point : nil)
+        self.setPointerInside(inside)
+    }
+
+    private func setPointerInside(_ inside: Bool) {
+        guard inside != self.isPointerInside else { return }
+        self.isPointerInside = inside
+        // May run while SwiftUI is attaching or laying out the representable,
+        // where a state write is discarded; deliver on the next turn, like overflow.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.onHoverChange?(self.isPointerInside)
+        }
     }
 
     // MARK: Overflow + paging
@@ -557,6 +576,8 @@ private final class ObservationTick {
 @MainActor
 private final class HomeItemShelfDocumentView: NSView {
     var hoverHandler: ((NSPoint?) -> Void)?
+    /// Called with whether the view is now in a window.
+    var windowHandler: ((Bool) -> Void)?
     /// `(index, isLikeControl)`.
     var clickHandler: ((Int, Bool) -> Void)?
     var cells: [HomeItemCell] = []
@@ -577,6 +598,11 @@ private final class HomeItemShelfDocumentView: NSView {
 
     func cellIndex(at point: NSPoint) -> Int? {
         self.cells.firstIndex { $0.frame.contains(point) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        self.windowHandler?(self.window != nil)
     }
 
     override func updateTrackingAreas() {
