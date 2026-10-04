@@ -94,7 +94,11 @@ struct PlaylistDetailView: View {
                     .environment(\.playerBarCurrentAlbumID, self.playlist.isAlbum ? self.playlist.id : nil)
             }
         }
-        .task {
+        // Keyed on `.idle` so the load re-runs when the view model drops back to it
+        // (e.g. a like-status scope change invalidates Liked Music pagination);
+        // a plain `.task` runs once and would leave the loading spinner up forever.
+        .task(id: self.viewModel.loadingState == .idle) {
+            guard self.viewModel.loadingState == .idle else { return }
             await self.viewModel.ensureLoaded()
         }
         .refreshable {
