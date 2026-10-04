@@ -95,23 +95,6 @@ struct CarouselShelf<Content: View>: View {
     }
 }
 
-// MARK: - ShelfHoverTracking
-
-/// Adds `.onHover` only when enabled. Each call site passes a constant, so
-/// the branch never flips and the content keeps its identity.
-private struct ShelfHoverTracking: ViewModifier {
-    let isEnabled: Bool
-    let action: (Bool) -> Void
-
-    func body(content: Content) -> some View {
-        if self.isEnabled {
-            content.onHover(perform: self.action)
-        } else {
-            content
-        }
-    }
-}
-
 // MARK: - CarouselShelfPagingControls
 
 /// The glass paging arrows, their hover/focus prominence, and the shelf's
@@ -124,10 +107,6 @@ struct CarouselShelfPagingControls: ViewModifier {
     let controlVerticalAlignment: VerticalAlignment
     let contentInset: CGFloat
     let page: (CarouselShelfDirection) -> Void
-    /// Shelf hover reported by the shelf's own platform view. When set, the
-    /// modifier adds no `.onHover` responder (SwiftUI re-hit-tests every hover
-    /// responder on each scroll frame while content moves under the pointer).
-    var externalHover: Bool?
 
     @State private var isShelfHovering = false
     @FocusState private var focusedDirection: CarouselShelfDirection?
@@ -154,15 +133,15 @@ struct CarouselShelfPagingControls: ViewModifier {
             .animation(AppAnimation.quick, value: self.showsLeading)
             .animation(AppAnimation.quick, value: self.showsTrailing)
             .animation(AppAnimation.quick, value: self.hasControlProminence)
-            .modifier(ShelfHoverTracking(isEnabled: self.externalHover == nil) { isHovering in
+            .onHover { isHovering in
                 self.isShelfHovering = isHovering
-            })
+            }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(self.accessibilityLabel)
     }
 
     private var hasControlProminence: Bool {
-        (self.externalHover ?? self.isShelfHovering) || self.focusedDirection != nil
+        self.isShelfHovering || self.focusedDirection != nil
     }
 
     private func controlButton(for direction: CarouselShelfDirection) -> some View {
