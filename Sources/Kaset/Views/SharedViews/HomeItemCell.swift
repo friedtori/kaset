@@ -132,6 +132,18 @@ final class HomeItemCell: NSView {
         CATransaction.commit()
     }
 
+    /// Off-window cards (shelves SwiftUI has detached) drop their text bitmap;
+    /// re-attaching restores it from the shared cache in `updateLayer`.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if self.window == nil {
+            self.textLayer.contents = nil
+            self.textLayerKey = nil
+        } else {
+            self.needsDisplay = true
+        }
+    }
+
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         self.needsLayout = true
@@ -527,6 +539,8 @@ final class HomeItemCell: NSView {
         let width = Self.width(for: item)
         let isRightToLeft = self.isRightToLeft
         let isExplicit = self.isExplicit
+        // The bitmap is reused whenever this key matches, so it must name every
+        // input `drawText` reads; a new input missing here shows stale text.
         let key = [
             item.title, item.homeCardSubtitle ?? "", "\(isExplicit)", "\(width)", "\(isRightToLeft)",
             self.effectiveAppearance.name.rawValue, "\(scale)",
@@ -541,7 +555,8 @@ final class HomeItemCell: NSView {
             self.effectiveAppearance.performAsCurrentDrawingAppearance {
                 // Only the band below the artwork holds text.
                 let size = NSSize(width: width, height: Self.height - Self.artworkHeight)
-                rendered = HomeItemLayerImage.render(size: size, scale: scale, flipped: true) { _ in
+                // Every text color here is a neutral gray, so gray + alpha is lossless.
+                rendered = HomeItemLayerImage.render(size: size, scale: scale, flipped: true, grayscale: true) { _ in
                     NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -Self.artworkHeight)
                     Self.drawText(for: item, width: width, isExplicit: isExplicit, isRightToLeft: isRightToLeft)
                 }
@@ -813,9 +828,16 @@ private final class HomeItemArtworkLayers {
 @MainActor
 private enum HomeItemLayerImage {
     /// Produces a bitmap with an explicit pixels-per-point ratio for CALayer.
-    static func render(size: NSSize, scale: CGFloat, flipped: Bool = false, draw: (NSRect) -> Void) -> CGImage? {
+    /// `grayscale` halves the bitmap for content drawn only in neutral colors.
+    static func render(
+        size: NSSize,
+        scale: CGFloat,
+        flipped: Bool = false,
+        grayscale: Bool = false,
+        draw: (NSRect) -> Void
+    ) -> CGImage? {
         let bounds = NSRect(x: 0, y: 0, width: ceil(size.width), height: ceil(size.height))
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+        guard let colorSpace = CGColorSpace(name: grayscale ? CGColorSpace.genericGrayGamma2_2 : CGColorSpace.sRGB),
               let context = CGContext(
                   data: nil, width: Int(bounds.width * scale), height: Int(bounds.height * scale),
                   bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
