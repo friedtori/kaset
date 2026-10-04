@@ -401,8 +401,13 @@ struct MainWindow: View { // swiftlint:disable:this type_body_length
                 // History is recorded by the playback WebViews' own stats pings, so a
                 // track/video still loaded under the previous identity must reload to
                 // record to the new account. The shared cookie session covers both.
-                guard self.accountService.verifiedAccountId != nil else { return }
-                self.playerService.reloadCurrentTrackForIdentitySwitch()
+                guard let verifiedAccountId = self.accountService.verifiedAccountId else { return }
+                // Native reads for a brand account name it via `onBehalfOfUser`, so
+                // like data fetched before this (re-)verification is already correct;
+                // only a primary account's reads follow the cookies' delegated identity.
+                let currentAccount = self.accountService.currentAccount
+                let isVerifiedBrand = currentAccount?.id == verifiedAccountId && currentAccount?.brandId != nil
+                self.playerService.reloadCurrentTrackForIdentitySwitch(invalidatesLikeSession: !isVerifiedBrand)
                 if self.youtubePlayerService.currentVideo != nil {
                     self.youtubePlayerService.reloadCurrentVideoForIdentitySwitch()
                 }
