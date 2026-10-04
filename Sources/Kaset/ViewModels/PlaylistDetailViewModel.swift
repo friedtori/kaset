@@ -178,15 +178,22 @@ final class PlaylistDetailViewModel {
     /// Runs the initial load (including full-playlist paging) once, coalescing concurrent
     /// callers so a player can await the complete track set before finalizing the queue.
     func ensureLoaded() async {
-        if let loadTask {
+        while let loadTask {
             await loadTask.value
-            return
+            if self.loadTask == loadTask {
+                self.loadTask = nil
+            }
+            // A finished load can drop back to `.idle` (e.g. a Liked Music scope change);
+            // fall through and start a fresh one instead of leaving the view unloaded.
+            guard self.loadingState == .idle else { return }
         }
         guard self.loadingState == .idle else { return }
         let task = Task { await self.load() }
         self.loadTask = task
         await task.value
-        self.loadTask = nil
+        if self.loadTask == task {
+            self.loadTask = nil
+        }
     }
 
     /// Drives pagination to completion (every track), for callers that need the full playlist
