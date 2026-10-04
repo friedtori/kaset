@@ -35,11 +35,21 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
         !self.accessibilityReduceMotion
     }
 
+    /// A synchronous memory-cache hit for the current request, if the async load hasn't landed yet.
+    private var memoryCachedImage: NSImage? {
+        guard self.image == nil, let url = self.url else { return nil }
+        return ImageCache.shared.cachedImage(for: url, targetSize: self.targetSize)
+    }
+
     var body: some View {
+        // A memory-cache hit renders on the first frame with no placeholder and no
+        // fade, so views re-realized while scrolling (lazy stack rows) don't pay a
+        // placeholder render + async hop + crossfade animation each time.
+        let cached = self.memoryCachedImage
         ZStack {
-            if let image {
+            if let image = self.image ?? cached {
                 self.content(Image(nsImage: image))
-                    .opacity(self.isLoaded ? 1 : 0)
+                    .opacity(self.isLoaded || cached != nil ? 1 : 0)
                     .animation(self.shouldAnimate ? .easeIn(duration: 0.25) : nil, value: self.isLoaded)
             } else {
                 self.placeholder()
@@ -54,6 +64,17 @@ struct CachedAsyncImage<Content: View, Placeholder: View>: View {
         .task(id: self.request) {
             let request = self.request
             guard let url = request.url else { return }
+            if let cached = ImageCache.shared.cachedImage(for: url, targetSize: request.targetSize) {
+                // Already on screen via `memoryCachedImage`; adopt it without an
+                // animated transition so it survives a later memory-cache eviction.
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    self.image = cached
+                    self.isLoaded = true
+                }
+                return
+            }
             let loadedImage = await ImageCache.shared.image(for: url, targetSize: request.targetSize)
             guard !Task.isCancelled, self.request == request else { return }
 
