@@ -82,9 +82,15 @@ struct PlaylistTrackRow<Menu: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            LikeButton(song: self.track, isRowHovered: self.isHovered, allowsActions: self.allowsLikeActions)
-                .disabled(!self.track.isPlayable)
-                .allowsHitTesting(self.allowsLikeActions && self.track.isPlayable)
+            // Not nested: the row's play button sits in `.background`, not around this.
+            LikeButton(
+                song: self.track,
+                isRowHovered: self.isHovered,
+                allowsActions: self.allowsLikeActions,
+                isNestedInButton: false
+            )
+            .disabled(!self.track.isPlayable)
+            .allowsHitTesting(self.allowsLikeActions && self.track.isPlayable)
 
             Text(self.track.durationDisplay)
                 .font(.system(size: 12))
