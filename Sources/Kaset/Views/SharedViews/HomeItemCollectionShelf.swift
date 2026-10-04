@@ -151,6 +151,13 @@ struct HomeItemCollectionShelf: NSViewRepresentable {
         self.configure(context.coordinator)
     }
 
+    /// The shelf's size is fixed by its container. Without this, SwiftUI sizes the
+    /// platform view through Auto Layout (`intrinsicLayoutTraits` and a window
+    /// constraint pass) every time a shelf is realized mid-scroll.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView _: NSScrollView, context _: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: HomeItemCell.height)
+    }
+
     static func dismantleNSView(_: NSScrollView, coordinator: HomeItemShelfView) {
         coordinator.removeObservers()
     }
