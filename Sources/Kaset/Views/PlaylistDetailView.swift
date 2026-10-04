@@ -260,22 +260,26 @@ struct PlaylistDetailView: View {
     ) -> some View {
         LazyVStack(spacing: 0) {
             ForEach(Array(tracks.enumerated()), id: \.offset) { index, track in
-                self.trackRow(
-                    track, index: index, tracks: tracks, isAlbum: isAlbum, author: author,
-                    fallbackAlbum: fallbackAlbum
-                )
+                // Row and divider form one lazy-stack element: as siblings they doubled
+                // the subviews the stack places and re-realizes while scrolling.
+                VStack(spacing: 0) {
+                    self.trackRow(
+                        track, index: index, tracks: tracks, isAlbum: isAlbum, author: author,
+                        fallbackAlbum: fallbackAlbum
+                    )
+
+                    if index < tracks.count - 1 {
+                        Divider()
+                            // For albums: 28 (index) + 12 (spacing)
+                            // For playlists: 28 (index) + 12 (spacing) + 40 (thumbnail) + 16 (spacing)
+                            .padding(.leading, isAlbum ? 40 : 96)
+                    }
+                }
                 .onAppear {
                     // Load more when reaching the last few items
                     if index >= tracks.count - 3, self.viewModel.hasMore {
                         Task { await self.viewModel.loadMore() }
                     }
-                }
-
-                if index < tracks.count - 1 {
-                    Divider()
-                        // For albums: 28 (index) + 12 (spacing)
-                        // For playlists: 28 (index) + 12 (spacing) + 40 (thumbnail) + 16 (spacing)
-                        .padding(.leading, isAlbum ? 40 : 96)
                 }
             }
 
