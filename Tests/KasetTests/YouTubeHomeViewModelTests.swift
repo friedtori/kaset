@@ -269,10 +269,20 @@ struct YouTubeHomeViewModelTests {
         })
 
         await self.sut.load()
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await self.sut.loadMoreTopicRails() }
-            group.addTask { await self.sut.loadMoreTopicRails() }
+
+        // Hold the next batch open so the second call deterministically lands
+        // while the first is still in flight. Two unsynchronized child tasks can
+        // run back-to-back instead, letting the second legitimately load tok-4/5.
+        let gate = AsyncGate()
+        self.mockClient.beforeTopicReturn = { _ in await gate.wait() }
+        async let firstBatch: Void = self.sut.loadMoreTopicRails()
+        while self.mockClient.requestedTopicContinuations.count < 3 {
+            await Task.yield()
         }
+        await self.sut.loadMoreTopicRails() // in-flight duplicate: must no-op
+        await gate.open()
+        await firstBatch
+        self.mockClient.beforeTopicReturn = nil
 
         #expect(Set(self.mockClient.requestedTopicContinuations) == Set(["tok-0", "tok-1", "tok-2", "tok-3"]))
         #expect(self.mockClient.requestedTopicContinuations.count == 4)
