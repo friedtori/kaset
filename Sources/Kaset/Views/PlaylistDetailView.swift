@@ -61,23 +61,26 @@ struct PlaylistDetailView: View {
 
     var body: some View {
         Group {
-            switch self.viewModel.loadingState {
-            case .idle, .loading:
-                LoadingView(String(localized: "Loading playlist..."))
-            case .loaded, .loadingMore:
-                if let detail = viewModel.playlistDetail {
-                    self.contentView(detail)
-                } else {
+            // Rows still loaded during an in-place reload (a same-account Liked Music
+            // scope bump) stay on screen in the same branch, so the list keeps its
+            // scroll position instead of blanking to a spinner.
+            if let detail = self.displayedDetail {
+                self.contentView(detail)
+            } else {
+                switch self.viewModel.loadingState {
+                case .idle, .loading:
+                    LoadingView(String(localized: "Loading playlist..."))
+                case .loaded, .loadingMore:
                     ErrorView(
                         title: String(localized: "Unable to load playlist"),
                         message: String(localized: "Playlist not found")
                     ) {
                         Task { await self.viewModel.load() }
                     }
-                }
-            case let .error(error):
-                ErrorView(error: error) {
-                    Task { await self.viewModel.load() }
+                case let .error(error):
+                    ErrorView(error: error) {
+                        Task { await self.viewModel.load() }
+                    }
                 }
             }
         }
@@ -133,6 +136,13 @@ struct PlaylistDetailView: View {
     }
 
     // MARK: - Views
+
+    private var displayedDetail: PlaylistDetail? {
+        if case .error = self.viewModel.loadingState {
+            return nil
+        }
+        return self.viewModel.playlistDetail
+    }
 
     private func contentView(_ detail: PlaylistDetail) -> some View {
         ScrollView {

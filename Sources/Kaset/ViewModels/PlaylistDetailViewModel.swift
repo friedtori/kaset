@@ -302,6 +302,7 @@ extension PlaylistDetailViewModel {
         detail = self.detailByMergingOriginalPlaylistMetadata(into: detail)
         if let snapshot = context.likedMusicSnapshot {
             guard let reconciliation = self.reconciledLikedMusicDetail(detail, snapshot: snapshot) else {
+                self.dropDetailUnlessSameAccount(as: snapshot)
                 self.loadingState = .idle
                 return nil
             }
@@ -458,10 +459,19 @@ extension PlaylistDetailViewModel {
     private func canApplyInitialLoad(_ context: InitialLoadContext) -> Bool {
         guard self.isCurrentLoadGeneration(context.generation) else { return false }
         guard self.isCurrentLikedMusicScope(context.likedMusicSnapshot) else {
+            self.dropDetailUnlessSameAccount(as: context.likedMusicSnapshot)
             self.loadingState = .idle
             return false
         }
         return true
+    }
+
+    /// A Liked Music scope bump for the *same* account (e.g. the launch session
+    /// re-pin) keeps the loaded rows on screen while the view's idle-keyed load task
+    /// reloads in place; rows loaded for a different account must never stay visible.
+    private func dropDetailUnlessSameAccount(as snapshot: LikedMusicRequestSnapshot?) {
+        guard snapshot?.accountID != self.likeStatusManager.activeAccountID else { return }
+        self.replacePlaylistDetail(nil)
     }
 
     /// Loads more tracks via continuation.
@@ -877,7 +887,7 @@ extension PlaylistDetailViewModel {
         self.fullLoadTask = nil
         self.hasMore = false
         self.continuationToken = nil
-        self.replacePlaylistDetail(nil)
+        self.dropDetailUnlessSameAccount(as: self.loadedLikedMusicScope)
         self.loadingState = .idle
     }
 

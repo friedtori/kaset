@@ -1504,6 +1504,53 @@ struct PlaylistDetailViewModelTests {
         #expect(likedMusicViewModel.hasMore == false)
     }
 
+    @Test("Same-account scope bump during pagination keeps loaded Liked Music rows and reloads in place")
+    func sameAccountScopeBumpKeepsLikedMusicRows() async {
+        let manager = self.likeStatusManager
+        manager.setActiveAccountID("same-account-scope-bump")
+        defer { manager.setActiveAccountID(nil) }
+
+        let firstSong = TestFixtures.makeSong(id: "first-page", title: "First Page")
+        let laterSong = TestFixtures.makeSong(id: "second-page", title: "Second Page")
+        let likedMusicViewModel = self.makeLikedMusicViewModel(with: [firstSong], trackCount: 2)
+        self.mockClient.playlistContinuationTracks[LikedMusicPlaylist.id] = [[laterSong]]
+
+        await likedMusicViewModel.load()
+        #expect(likedMusicViewModel.hasMore == true)
+
+        manager.invalidateSession(clearsActiveCache: false)
+        await likedMusicViewModel.loadMore()
+
+        #expect(likedMusicViewModel.loadingState == .idle)
+        #expect(likedMusicViewModel.playlistDetail?.tracks.map(\.videoId) == [firstSong.videoId])
+
+        await likedMusicViewModel.ensureLoaded()
+        #expect(likedMusicViewModel.loadingState == .loaded)
+        #expect(likedMusicViewModel.playlistDetail?.tracks.map(\.videoId) == [firstSong.videoId])
+        #expect(likedMusicViewModel.hasMore == true)
+    }
+
+    @Test("Account change during pagination drops loaded Liked Music rows")
+    func accountChangeDropsLikedMusicRows() async {
+        let manager = self.likeStatusManager
+        manager.setActiveAccountID("previous-account")
+        defer { manager.setActiveAccountID(nil) }
+
+        let firstSong = TestFixtures.makeSong(id: "previous-first", title: "Previous First")
+        let laterSong = TestFixtures.makeSong(id: "previous-later", title: "Previous Later")
+        let likedMusicViewModel = self.makeLikedMusicViewModel(with: [firstSong], trackCount: 2)
+        self.mockClient.playlistContinuationTracks[LikedMusicPlaylist.id] = [[laterSong]]
+
+        await likedMusicViewModel.load()
+        #expect(likedMusicViewModel.hasMore == true)
+
+        manager.setActiveAccountID("next-account")
+        await likedMusicViewModel.loadMore()
+
+        #expect(likedMusicViewModel.loadingState == .idle)
+        #expect(likedMusicViewModel.playlistDetail == nil)
+    }
+
     @Test("Same-account invalidation keeps loaded Liked Music live sync active")
     func sameAccountInvalidationKeepsLoadedLikedMusicLiveSyncActive() async {
         let manager = self.likeStatusManager
