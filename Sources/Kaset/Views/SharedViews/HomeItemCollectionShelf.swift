@@ -29,6 +29,7 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
 
     @State private var overflow = CarouselShelfOverflow()
     @State private var pager = HomeItemShelfPager()
+    @State private var isHovering = false
 
     init(
         accessibilityLabel: String,
@@ -66,6 +67,7 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
                 playlistPlayAction: self.playlistPlayAction,
                 contextMenu: self.contextMenu.map { menu in { item, index in AnyView(menu(item, index)) } },
                 overflow: self.$overflow,
+                isHovering: self.$isHovering,
                 pager: self.pager
             )
             .frame(height: HomeItemCell.height)
@@ -75,7 +77,8 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
                 showsTrailing: self.overflow.trailing,
                 controlVerticalAlignment: .center,
                 contentInset: self.contentInset,
-                page: { self.pager.page($0) }
+                page: { self.pager.page($0) },
+                externalHover: self.isHovering
             ))
         }
     }
@@ -126,6 +129,7 @@ struct HomeItemCollectionShelf: NSViewRepresentable {
     let playlistPlayAction: (HomeSectionItem) -> (() -> Void)?
     let contextMenu: ((HomeSectionItem, Int) -> AnyView)?
     @Binding var overflow: CarouselShelfOverflow
+    @Binding var isHovering: Bool
     let pager: HomeItemShelfPager
 
     /// Forwarded into the hosted play overlay and context menu so they see the
@@ -155,6 +159,11 @@ struct HomeItemCollectionShelf: NSViewRepresentable {
         view.onOverflowChange = { overflow in
             if overflow != self.overflow {
                 self.overflow = overflow
+            }
+        }
+        view.onHoverChange = { isHovering in
+            if isHovering != self.isHovering {
+                self.isHovering = isHovering
             }
         }
         view.apply(HomeItemShelfView.Configuration(
@@ -191,6 +200,9 @@ final class HomeItemShelfView: NSObject {
     static let pageFraction: CGFloat = 0.85
 
     var onOverflowChange: ((CarouselShelfOverflow) -> Void)?
+    /// Pointer entered or left the shelf (drives the paging controls' prominence).
+    var onHoverChange: ((Bool) -> Void)?
+    private var isPointerInside = false
 
     let scrollView = NSScrollView()
     private let documentView = HomeItemShelfDocumentView()
@@ -220,7 +232,13 @@ final class HomeItemShelfView: NSObject {
         super.init()
 
         self.documentView.hoverHandler = { [weak self] point in
-            self?.updateHover(at: point)
+            guard let self else { return }
+            self.updateHover(at: point)
+            let inside = point != nil
+            if inside != self.isPointerInside {
+                self.isPointerInside = inside
+                self.onHoverChange?(inside)
+            }
         }
         self.documentView.clickHandler = { [weak self] index, isLikeControl in
             if isLikeControl {

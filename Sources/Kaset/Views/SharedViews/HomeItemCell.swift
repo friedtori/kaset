@@ -3,10 +3,10 @@ import SwiftUI
 
 // MARK: - HomeItemCell
 
-/// Native card as a single layer-backed view. Everything static — title,
-/// subtitle, explicit badge, chart rank, like button — is drawn into the
-/// view's own backing bitmap once per configure; the artwork and its hover
-/// lift are sublayers; the glass play overlay is the one piece of SwiftUI,
+/// Native card as a single layer-backed view with no backing store of its
+/// own. Everything static — title, subtitle, explicit badge, chart rank, like
+/// button — is a cached bitmap on a sublayer; the artwork and its hover lift
+/// are sublayers too; the glass play overlay is the one piece of SwiftUI,
 /// hosted only while the card is hovered.
 ///
 /// One `NSView` per card is the point: SwiftUI detaches and re-attaches each
@@ -34,10 +34,15 @@ final class HomeItemCell: NSView {
     var likeAction: (() -> Void)?
 
     private let artwork = HomeItemArtworkLayers()
-    /// Like control and chart rank sit above the artwork, so they are layers
-    /// (the view's own bitmap is beneath the artwork sublayers).
+    /// Like control and chart rank sit above the artwork.
     private let likeLayer = CALayer()
     private let rankLayer = CALayer()
+    /// Title, subtitle and explicit badge, rendered once into a cached bitmap.
+    /// A layer (rather than `draw(_:)`) because AppKit redisplays a view's
+    /// backing store every time SwiftUI re-attaches the shelf at the viewport
+    /// edge, and re-typesetting every card's text there dropped frames.
+    private let textLayer = CALayer()
+    private var textLayerKey: String?
     private var playOverlay: NSHostingView<AnyView>?
 
     private(set) var item: HomeSectionItem?
@@ -55,6 +60,8 @@ final class HomeItemCell: NSView {
         super.init(frame: frameRect)
         self.wantsLayer = true
         self.layerContentsRedrawPolicy = .onSetNeedsDisplay
+        self.textLayer.contentsGravity = .resize
+        self.layer?.addSublayer(self.textLayer)
         self.layer?.addSublayer(self.artwork.liftLayer)
         self.likeLayer.contentsGravity = .center
         self.likeLayer.isHidden = true
@@ -113,6 +120,7 @@ final class HomeItemCell: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         self.artwork.layout(in: NSRect(x: 0, y: 0, width: width, height: Self.artworkHeight), scale: scale)
+        self.textLayer.frame = NSRect(x: 0, y: Self.artworkHeight, width: width, height: Self.height - Self.artworkHeight)
         // Flipped view: layer frames are in the view's (top-left origin) space.
         self.likeLayer.frame = self.likeControlFrame(width: width)
         // Mirrors the SwiftUI card: leading 8, 60pt above the card's bottom.
@@ -179,8 +187,8 @@ final class HomeItemCell: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        // Text colors are dynamic but drawn into our own bitmap; the layer
-        // images resolve system colors when rendered.
+        // Text colors are dynamic but baked into the text bitmap (re-resolved
+        // by `updateLayer`); the layer images resolve system colors when rendered.
         self.needsDisplay = true
         if let item {
             self.artwork.refreshAppearance(for: item)
@@ -505,11 +513,61 @@ final class HomeItemCell: NSView {
         return descriptor.flatMap { NSFont(descriptor: $0, size: 32) } ?? .systemFont(ofSize: 32, weight: .bold)
     }()
 
-    override func draw(_: NSRect) {
-        guard let item else { return }
+    override var wantsUpdateLayer: Bool {
+        true
+    }
+
+    override func updateLayer() {
+        guard let item else {
+            self.textLayer.contents = nil
+            self.textLayerKey = nil
+            return
+        }
+        let scale = self.window?.backingScaleFactor ?? 2
         let width = Self.width(for: item)
-        let textTop = Self.artworkHeight + 8
+        let isRightToLeft = self.isRightToLeft
         let isExplicit = self.isExplicit
+        let key = [
+            item.title, item.homeCardSubtitle ?? "", "\(isExplicit)", "\(width)", "\(isRightToLeft)",
+            self.effectiveAppearance.name.rawValue, "\(scale)",
+        ].joined(separator: "\u{1F}")
+        guard key != self.textLayerKey else { return }
+        self.textLayerKey = key
+        let image: CGImage?
+        if let cached = Self.textImages.object(forKey: key as NSString) {
+            image = cached
+        } else {
+            var rendered: CGImage?
+            self.effectiveAppearance.performAsCurrentDrawingAppearance {
+                // Only the band below the artwork holds text.
+                let size = NSSize(width: width, height: Self.height - Self.artworkHeight)
+                rendered = HomeItemLayerImage.render(size: size, scale: scale, flipped: true) { _ in
+                    NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -Self.artworkHeight)
+                    Self.drawText(for: item, width: width, isExplicit: isExplicit, isRightToLeft: isRightToLeft)
+                }
+            }
+            if let rendered {
+                Self.textImages.setObject(rendered, forKey: key as NSString, cost: rendered.bytesPerRow * rendered.height)
+            }
+            image = rendered
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        self.textLayer.contents = image
+        self.textLayer.contentsScale = scale
+        CATransaction.commit()
+    }
+
+    /// Rendered text bitmaps shared across cells, so a shelf that SwiftUI
+    /// rebuilds reuses its cards' text instead of typesetting it again.
+    private static let textImages: NSCache<NSString, CGImage> = {
+        let cache = NSCache<NSString, CGImage>()
+        cache.totalCostLimit = 24 * 1024 * 1024
+        return cache
+    }()
+
+    private static func drawText(for item: HomeSectionItem, width: CGFloat, isExplicit: Bool, isRightToLeft: Bool) {
+        let textTop = Self.artworkHeight + 8
         let badgeSize: CGFloat = 12
         let titleMaxWidth = width - (isExplicit ? badgeSize + 6 : 0)
 
@@ -518,7 +576,7 @@ final class HomeItemCell: NSView {
         // ellipsis on line two; a tail-truncating paragraph would force one line.
         let wrapping = NSMutableParagraphStyle()
         wrapping.lineBreakMode = .byWordWrapping
-        wrapping.alignment = self.isRightToLeft ? .right : .left
+        wrapping.alignment = isRightToLeft ? .right : .left
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         paragraph.alignment = wrapping.alignment
@@ -533,14 +591,14 @@ final class HomeItemCell: NSView {
             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
         )
         let titleRect = NSRect(
-            x: self.isRightToLeft ? width - titleMaxWidth : 0,
+            x: isRightToLeft ? width - titleMaxWidth : 0,
             y: textTop, width: titleMaxWidth, height: min(ceil(titleBounds.height), titleLineHeight * 2)
         )
         title.draw(with: titleRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
 
         if isExplicit {
             let titleWidth = min(ceil(titleBounds.width), titleMaxWidth)
-            let badgeX = self.isRightToLeft ? width - titleWidth - 6 - badgeSize : titleWidth + 6
+            let badgeX = isRightToLeft ? width - titleWidth - 6 - badgeSize : titleWidth + 6
             let badgeRect = NSRect(x: badgeX, y: textTop + (titleLineHeight - badgeSize) / 2, width: badgeSize, height: badgeSize)
             NSColor.secondaryLabelColor.setFill()
             NSBezierPath(roundedRect: badgeRect, xRadius: 2.5, yRadius: 2.5).fill()
@@ -755,7 +813,7 @@ private final class HomeItemArtworkLayers {
 @MainActor
 private enum HomeItemLayerImage {
     /// Produces a bitmap with an explicit pixels-per-point ratio for CALayer.
-    static func render(size: NSSize, scale: CGFloat, draw: (NSRect) -> Void) -> CGImage? {
+    static func render(size: NSSize, scale: CGFloat, flipped: Bool = false, draw: (NSRect) -> Void) -> CGImage? {
         let bounds = NSRect(x: 0, y: 0, width: ceil(size.width), height: ceil(size.height))
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
@@ -765,8 +823,12 @@ private enum HomeItemLayerImage {
               )
         else { return nil }
         context.scaleBy(x: scale, y: scale)
+        if flipped {
+            context.translateBy(x: 0, y: bounds.height)
+            context.scaleBy(x: 1, y: -1)
+        }
         NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: flipped)
         defer { NSGraphicsContext.restoreGraphicsState() }
         draw(bounds)
         return context.makeImage()

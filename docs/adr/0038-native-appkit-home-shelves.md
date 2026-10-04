@@ -29,8 +29,9 @@ Shelves of `HomeSectionItem` cards render through `HomeItemShelfSection`
 `HomeItemCell` per item for the shelf's lifetime.
 
 `HomeItemCell` is a single layer-backed `NSView`. Artwork and its hover lift
-are sublayers; title, subtitle and explicit badge are drawn into the view's
-bitmap once per configure; the like control and chart rank are image layers.
+are sublayers; title, subtitle and explicit badge are a cached bitmap on a
+sublayer (the view has no backing store: `wantsUpdateLayer`); the like control
+and chart rank are image layers.
 SwiftUI is used only for the hovered card's glass play overlay and for the
 context menu (`NSHostingMenu` over the existing SwiftUI menu items), so the
 existing menu logic, `SongLikeStatusManager`, and `ImageCache` are shared
@@ -48,6 +49,13 @@ Measured, and therefore rejected:
   cheaper.
 - Multi-view cells (text fields, buttons, badge views) cost ~7 dropped frames
   per pass through AppKit's attach/detach and constraint passes.
+- Drawing the card text in `draw(_:)`: AppKit redisplays a view's backing
+  store each time SwiftUI re-attaches the shelf, so every card re-typeset its
+  title and subtitle at the viewport edge. Moving the text to a cached bitmap
+  layer halved dropped frames (constant 2000 pt/s scroll, ~29 → ~14 per pass).
+- A SwiftUI `.onHover` per shelf for the paging controls' prominence: SwiftUI
+  re-hit-tests hover responders on every scroll frame. The shelf's own AppKit
+  tracking area reports hover instead (~2–4 fewer dropped frames per pass).
 
 ## Consequences
 
