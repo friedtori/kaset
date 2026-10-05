@@ -173,10 +173,12 @@ struct LibraryView: View {
                 self.libraryGrid
             }
             .padding(.vertical, 20)
+            // Inset the resting content while the scroll view stays edge-to-edge,
+            // so the grid extends under the floating glass sidebar.
+            // Padding, not `.contentMargins(for: .scrollContent)`: on macOS 26
+            // content margins draw the content offset from where it hit-tests.
+            .padding(.horizontal, DetailContentLayout.horizontalInset)
         }
-        // Inset the resting content while the scroll view stays edge-to-edge,
-        // so the grid extends under the floating glass sidebar.
-        .contentMargins(.horizontal, DetailContentLayout.horizontalInset, for: .scrollContent)
     }
 
     private var filterChips: some View {

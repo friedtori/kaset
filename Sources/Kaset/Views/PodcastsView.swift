@@ -287,10 +287,12 @@ struct PodcastShowView: View {
                 self.episodesList
             }
             .padding(.vertical, 24)
+            // Inset resting content while the scroll view stays edge-to-edge so the
+            // accent backdrop refracts through the floating glass sidebar.
+            // Padding, not `.contentMargins(for: .scrollContent)`: on macOS 26
+            // content margins draw the content offset from where it hit-tests.
+            .padding(.horizontal, DetailContentLayout.horizontalInset)
         }
-        // Inset resting content while the scroll view stays edge-to-edge so the
-        // accent backdrop refracts through the floating glass sidebar.
-        .contentMargins(.horizontal, DetailContentLayout.horizontalInset, for: .scrollContent)
         .accentBackground(from: self.show.thumbnailURL)
         .navigationTitle(self.show.title)
         .navigationDestination(for: AllEpisodesDestination.self) { destination in
@@ -644,10 +646,12 @@ struct AllEpisodesView: View {
                 }
             }
             .padding(.vertical, 24)
+            // Inset resting content while the scroll view stays edge-to-edge so the
+            // accent backdrop refracts through the floating glass sidebar.
+            // Padding, not `.contentMargins(for: .scrollContent)`: on macOS 26
+            // content margins draw the content offset from where it hit-tests.
+            .padding(.horizontal, DetailContentLayout.horizontalInset)
         }
-        // Inset resting content while the scroll view stays edge-to-edge so the
-        // accent backdrop refracts through the floating glass sidebar.
-        .contentMargins(.horizontal, DetailContentLayout.horizontalInset, for: .scrollContent)
         .accentBackground(from: self.show.thumbnailURL)
         .localizedNavigationTitle("All Episodes")
         .safeAreaInset(edge: .bottom, spacing: 0) {

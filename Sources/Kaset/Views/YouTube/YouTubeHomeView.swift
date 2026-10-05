@@ -202,8 +202,10 @@ struct YouTubeHomeView: View {
                 }
             }
             .padding(.vertical, 20)
+            // Padding, not `.contentMargins(for: .scrollContent)`: on macOS 26
+            // content margins draw the content offset from where it hit-tests.
+            .padding(.horizontal, DetailContentLayout.horizontalInset)
         }
-        .contentMargins(.horizontal, DetailContentLayout.horizontalInset, for: .scrollContent)
         .disabled(true)
     }
 }

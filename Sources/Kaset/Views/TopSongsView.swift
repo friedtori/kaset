@@ -64,10 +64,12 @@ struct TopSongsView: View {
                 }
             }
             .padding(.vertical, 16)
+            // Edge-to-edge with a resting inset so the list extends under the
+            // floating glass sidebar; the accent backdrop refracts through it.
+            // Padding, not `.contentMargins(for: .scrollContent)`: on macOS 26
+            // content margins draw the content offset from where it hit-tests.
+            .padding(.horizontal, DetailContentLayout.horizontalInset)
         }
-        // Edge-to-edge with a resting inset so the list extends under the
-        // floating glass sidebar; the accent backdrop refracts through it.
-        .contentMargins(.horizontal, DetailContentLayout.horizontalInset, for: .scrollContent)
     }
 
     // MARK: - Song Row

@@ -13,13 +13,16 @@ import SwiftUI
 /// text and controls stay clear of the sidebar when not scrolling.
 ///
 /// Apply ``horizontalInset`` as that resting inset:
-/// - On scroll views, via `.contentMargins(.horizontal:for: .scrollContent)`,
-///   which keeps the scroll view edge-to-edge but insets the *content*.
+/// - On vertical scroll views, via `.padding(.horizontal:)` on the content
+///   *inside* the `ScrollView`, which keeps the scroll view edge-to-edge but
+///   insets the content. Avoid `.contentMargins(.horizontal:for: .scrollContent)`:
+///   on macOS 26 it draws the content offset from where it hit-tests, so small
+///   controls near a row's edge stop receiving clicks.
 /// - On non-scrolling headers, via `.padding(.horizontal:)`.
+/// - On horizontal shelves, via spacers inside the track (see ``CarouselShelf``).
 ///
-/// Both `.contentMargins` and `.padding` are available on macOS 14+, so the
-/// resting layout is identical on the legacy macOS 15 path (where there is no
-/// floating sidebar to slide under).
+/// The resting layout is identical on the legacy macOS 15 path (where there is
+/// no floating sidebar to slide under).
 enum DetailContentLayout {
     /// Horizontal resting inset (points) for detail content.
     ///
