@@ -635,10 +635,10 @@ struct AllEpisodesView: View {
                         ProgressView()
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding()
-                            .onAppear {
-                                Task {
-                                    await self.loadMoreEpisodes()
-                                }
+                            // Keyed by token so a page that adds no new episodes
+                            // (all duplicates) still advances to the next page.
+                            .task(id: self.currentContinuationToken) {
+                                await self.loadMoreEpisodes()
                             }
                     }
                 }
@@ -669,9 +669,14 @@ struct AllEpisodesView: View {
 
         do {
             let continuation = try await self.client.getPodcastEpisodesContinuation(token: token)
-            self.episodes.append(contentsOf: continuation.episodes)
+            // Skip episodes already shown: the ForEach is keyed by episode ID.
+            var seenIDs = Set(self.episodes.map(\.id))
+            let newEpisodes = continuation.episodes.filter { seenIDs.insert($0.id).inserted }
+            self.episodes.append(contentsOf: newEpisodes)
             self.currentContinuationToken = continuation.continuationToken
-            DiagnosticsLogger.api.info("Loaded \(continuation.episodes.count) more episodes")
+            DiagnosticsLogger.api.info("Loaded \(newEpisodes.count) more episodes")
+        } catch is CancellationError {
+            DiagnosticsLogger.api.debug("Episodes continuation load cancelled")
         } catch {
             DiagnosticsLogger.api.error("Failed to load more episodes: \(error.localizedDescription)")
         }
