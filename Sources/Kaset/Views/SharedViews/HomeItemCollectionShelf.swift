@@ -29,7 +29,7 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
 
     @State private var overflow = CarouselShelfOverflow()
     @State private var pager = HomeItemShelfPager()
-    @State private var isHovering = false
+    @State private var hover = CarouselShelfHover()
 
     init(
         accessibilityLabel: String,
@@ -67,7 +67,7 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
                 playlistPlayAction: self.playlistPlayAction,
                 contextMenu: self.contextMenu.map { menu in { item, index in AnyView(menu(item, index)) } },
                 overflow: self.$overflow,
-                isHovering: self.$isHovering,
+                hover: self.hover,
                 pager: self.pager
             )
             .frame(height: HomeItemCell.height)
@@ -78,7 +78,7 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
                 controlVerticalAlignment: .center,
                 contentInset: self.contentInset,
                 page: { self.pager.page($0) },
-                externalHover: self.isHovering
+                hover: self.hover
             ))
         }
     }
@@ -129,7 +129,7 @@ struct HomeItemCollectionShelf: NSViewRepresentable {
     let playlistPlayAction: (HomeSectionItem) -> (() -> Void)?
     let contextMenu: ((HomeSectionItem, Int) -> AnyView)?
     @Binding var overflow: CarouselShelfOverflow
-    @Binding var isHovering: Bool
+    let hover: CarouselShelfHover
     let pager: HomeItemShelfPager
 
     /// Forwarded into the hosted play overlay and context menu so they see the
@@ -161,9 +161,9 @@ struct HomeItemCollectionShelf: NSViewRepresentable {
                 self.overflow = overflow
             }
         }
-        view.onHoverChange = { isHovering in
-            if isHovering != self.isHovering {
-                self.isHovering = isHovering
+        view.onHoverChange = { [hover] isHovering in
+            if isHovering != hover.isHovering {
+                hover.isHovering = isHovering
             }
         }
         view.apply(HomeItemShelfView.Configuration(
@@ -482,7 +482,9 @@ final class HomeItemShelfView: NSObject {
     private func refreshHoverFromMouseLocation() {
         guard let window = self.scrollView.window else { return }
         let point = self.documentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        let inside = self.documentView.visibleRect.contains(point)
+        // The tracking area is active only in the key window, so no
+        // `mouseExited` would clear hover resolved while the window is not key.
+        let inside = window.isKeyWindow && self.documentView.visibleRect.contains(point)
         self.updateHover(at: inside ? point : nil)
         self.setPointerInside(inside)
     }
@@ -490,8 +492,8 @@ final class HomeItemShelfView: NSObject {
     private func setPointerInside(_ inside: Bool) {
         guard inside != self.isPointerInside else { return }
         self.isPointerInside = inside
-        // May run while SwiftUI is attaching or laying out the representable,
-        // where a state write is discarded; deliver on the next turn, like overflow.
+        // May run while SwiftUI is attaching or laying out the representable;
+        // deliver on the next turn rather than mid-update, like overflow.
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.onHoverChange?(self.isPointerInside)
