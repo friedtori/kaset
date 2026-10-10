@@ -46,6 +46,9 @@ final class HomeItemCell: NSView {
     private var playOverlay: NSHostingView<AnyView>?
 
     private(set) var item: HomeSectionItem?
+    /// `item.homeCardSubtitle`, parsed once per configure rather than on
+    /// every re-attach.
+    private var subtitle = ""
     private var rank: Int?
     private var playlistPlayAction: (() -> Void)?
     private var environment = EnvironmentValues()
@@ -137,8 +140,7 @@ final class HomeItemCell: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if self.window == nil {
-            self.textLayer.contents = nil
-            self.textLayerKey = nil
+            self.setTextImage(nil, key: nil)
         } else {
             self.needsDisplay = true
         }
@@ -286,6 +288,7 @@ final class HomeItemCell: NSView {
         self.needsDisplay = true
 
         let subtitle = item.homeCardSubtitle ?? ""
+        self.subtitle = subtitle
         var accessibilityLabel = rank.map { String(localized: "Number \($0), \(item.title)") } ?? item.title
         if !subtitle.isEmpty {
             accessibilityLabel += ", \(subtitle)"
@@ -531,54 +534,65 @@ final class HomeItemCell: NSView {
 
     override func updateLayer() {
         guard let item else {
-            self.textLayer.contents = nil
-            self.textLayerKey = nil
+            self.setTextImage(nil, key: nil)
             return
         }
         let scale = self.window?.backingScaleFactor ?? 2
         let width = Self.width(for: item)
+        let subtitle = self.subtitle
         let isRightToLeft = self.isRightToLeft
         let isExplicit = self.isExplicit
         // The bitmap is reused whenever this key matches, so it must name every
         // input `drawText` reads; a new input missing here shows stale text.
         let key = [
-            item.title, item.homeCardSubtitle ?? "", "\(isExplicit)", "\(width)", "\(isRightToLeft)",
+            item.title, subtitle, "\(isExplicit)", "\(width)", "\(isRightToLeft)",
             self.effectiveAppearance.name.rawValue, "\(scale)",
         ].joined(separator: "\u{1F}")
         guard key != self.textLayerKey else { return }
-        self.textLayerKey = key
-        let image: CGImage?
-        if let cached = Self.textImages.object(forKey: key as NSString) {
-            image = cached
-        } else {
-            var rendered: CGImage?
+        var image = Self.textImages.object(forKey: key as NSString)
+        if image == nil {
             self.effectiveAppearance.performAsCurrentDrawingAppearance {
                 // Only the band below the artwork holds text.
                 let size = NSSize(width: width, height: Self.height - Self.artworkHeight)
                 // Every color `drawText` sets is a neutral gray, so gray + alpha
                 // is lossless, except for color emoji in YouTube titles.
-                let grayscale = !Self.mayContainColorGlyphs(item.title + (item.homeCardSubtitle ?? ""))
-                rendered = HomeItemLayerImage.render(size: size, scale: scale, flipped: true, grayscale: grayscale) { _ in
+                let grayscale = !Self.mayContainColorGlyphs(item.title + subtitle)
+                image = HomeItemLayerImage.render(size: size, scale: scale, flipped: true, grayscale: grayscale) { _ in
                     NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -Self.artworkHeight)
-                    Self.drawText(for: item, width: width, isExplicit: isExplicit, isRightToLeft: isRightToLeft)
+                    Self.drawText(for: item, subtitle: subtitle, width: width, isExplicit: isExplicit, isRightToLeft: isRightToLeft)
                 }
             }
-            if let rendered {
-                Self.textImages.setObject(rendered, forKey: key as NSString, cost: rendered.bytesPerRow * rendered.height)
+            if let image {
+                Self.textImages.setObject(image, forKey: key as NSString, cost: image.bytesPerRow * image.height)
             }
-            image = rendered
         }
+        // A failed render records no key, so the next display pass retries it.
+        self.setTextImage(image, key: image == nil ? nil : key, scale: scale)
+    }
+
+    /// Swaps the text bitmap without the standalone layer's implicit
+    /// `contents` fade. A nil key makes the next display pass resolve it again.
+    private func setTextImage(_ image: CGImage?, key: String?, scale: CGFloat? = nil) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         self.textLayer.contents = image
-        self.textLayer.contentsScale = scale
+        if let scale {
+            self.textLayer.contentsScale = scale
+        }
         CATransaction.commit()
+        self.textLayerKey = key
     }
 
-    /// Emoji-presentation characters, or any character followed by the emoji
-    /// variation selector, draw as color glyphs.
+    /// Emoji-presentation characters, any character followed by the emoji
+    /// variation selector, and supplementary-plane emoji draw as color glyphs.
+    /// The last covers text-default emoji such as 🎙 (U+1F399), which CoreText
+    /// still draws from Apple Color Emoji; text-default symbols below U+1F000
+    /// (♥, ▶, ™) draw from monochrome fonts.
     static func mayContainColorGlyphs(_ text: String) -> Bool {
-        text.unicodeScalars.contains { $0.properties.isEmojiPresentation || $0.value == 0xFE0F }
+        text.unicodeScalars.contains { scalar in
+            scalar.value == 0xFE0F || scalar.properties.isEmojiPresentation
+                || (scalar.value >= 0x1F000 && scalar.properties.isEmoji)
+        }
     }
 
     /// Rendered text bitmaps shared across cells, so a shelf that SwiftUI
@@ -589,7 +603,7 @@ final class HomeItemCell: NSView {
         return cache
     }()
 
-    private static func drawText(for item: HomeSectionItem, width: CGFloat, isExplicit: Bool, isRightToLeft: Bool) {
+    private static func drawText(for item: HomeSectionItem, subtitle: String, width: CGFloat, isExplicit: Bool, isRightToLeft: Bool) {
         let textTop = Self.artworkHeight + 8
         let badgeSize: CGFloat = 12
         let titleMaxWidth = width - (isExplicit ? badgeSize + 6 : 0)
@@ -636,7 +650,7 @@ final class HomeItemCell: NSView {
             ))
         }
 
-        if let subtitle = item.homeCardSubtitle, !subtitle.isEmpty {
+        if !subtitle.isEmpty {
             let subtitleString = NSAttributedString(string: subtitle, attributes: [
                 .font: Self.subtitleFont,
                 .foregroundColor: NSColor.secondaryLabelColor,

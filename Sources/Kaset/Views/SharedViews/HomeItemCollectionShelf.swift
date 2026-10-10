@@ -455,7 +455,9 @@ final class HomeItemShelfView: NSObject {
     private func refreshHoverFromMouseLocation() {
         guard let window = self.scrollView.window else { return }
         let point = self.documentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        let inside = self.documentView.visibleRect.contains(point)
+        // The tracking area is active only in the key window, so no
+        // `mouseExited` would clear hover resolved while the window is not key.
+        let inside = window.isKeyWindow && self.documentView.visibleRect.contains(point)
         self.updateHover(at: inside ? point : nil)
         self.containerView.setHovering(inside)
     }

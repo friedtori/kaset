@@ -59,7 +59,7 @@ Measured, and therefore rejected:
   layer halved dropped frames (constant 2000 pt/s scroll, ~29 → ~14 per pass).
 - A SwiftUI `.onHover` per shelf for the paging controls' prominence: SwiftUI
   re-hit-tests hover responders on every scroll frame. The shelf's own AppKit
-  tracking area reports hover instead (~2–4 fewer dropped frames per pass).
+  tracking area reports hover instead (~14 → ~8 dropped frames per pass).
 - Letting SwiftUI size the shelf: without `sizeThatFits`, every realized shelf
   went through `intrinsicLayoutTraits` (Auto Layout measurement plus a window
   constraint pass). Reporting the size directly cut dropped frames ~35% at
