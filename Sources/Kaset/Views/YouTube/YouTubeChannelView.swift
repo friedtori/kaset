@@ -64,9 +64,7 @@ struct YouTubeChannelView: View {
             .padding(.vertical, 20)
             // Edge-to-edge with a resting inset so content extends under the
             // floating glass sidebar.
-            // Padding, not `.contentMargins(for: .scrollContent)`: on macOS 26
-            // content margins draw the content offset from where it hit-tests.
-            .padding(.horizontal, DetailContentLayout.horizontalInset)
+            .detailScrollContentInset()
         }
     }
 

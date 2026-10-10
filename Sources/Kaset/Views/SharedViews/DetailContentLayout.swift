@@ -13,11 +13,8 @@ import SwiftUI
 /// text and controls stay clear of the sidebar when not scrolling.
 ///
 /// Apply ``horizontalInset`` as that resting inset:
-/// - On vertical scroll views, via `.padding(.horizontal:)` on the content
-///   *inside* the `ScrollView`, which keeps the scroll view edge-to-edge but
-///   insets the content. Avoid `.contentMargins(.horizontal:for: .scrollContent)`:
-///   on macOS 26 it draws the content offset from where it hit-tests, so small
-///   controls near a row's edge stop receiving clicks.
+/// - On vertical scroll views, via ``SwiftUI/View/detailScrollContentInset()``
+///   on the content *inside* the `ScrollView`.
 /// - On non-scrolling headers, via `.padding(.horizontal:)`.
 /// - On horizontal shelves, via spacers inside the track (see ``CarouselShelf``).
 ///
@@ -29,4 +26,20 @@ enum DetailContentLayout {
     /// Matches the previous fixed `.padding(.horizontal, 24)` so the resting
     /// layout is visually unchanged; only the scroll-under behavior is new.
     static let horizontalInset: CGFloat = 24
+}
+
+extension View {
+    /// Insets vertical detail scroll content by ``DetailContentLayout/horizontalInset``.
+    ///
+    /// Apply to the content *inside* the `ScrollView`, so the scroll view stays
+    /// edge-to-edge (content and any accent backdrop extend under the floating
+    /// glass sidebar) while the content keeps its resting inset.
+    ///
+    /// Padding, not `.contentMargins(.horizontal:for: .scrollContent)`: on macOS 26
+    /// content margins draw the content offset by the inset from where it
+    /// hit-tests, so clicks land beside the control that is drawn under the
+    /// pointer (a track row's like button clicked the row's play button behind it).
+    func detailScrollContentInset() -> some View {
+        self.padding(.horizontal, DetailContentLayout.horizontalInset)
+    }
 }

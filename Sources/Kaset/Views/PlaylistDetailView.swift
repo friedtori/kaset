@@ -156,10 +156,7 @@ struct PlaylistDetailView: View {
             // Inset the resting content while the scroll view stays edge-to-edge so
             // content extends under the floating glass sidebar; the accent backdrop
             // (which ignores the safe area) refracts through it.
-            // Padding, not `.contentMargins(for: .scrollContent)`: on macOS 26
-            // content margins draw the content offset from where it hit-tests, so
-            // clicks on a row's like button landed on the play button behind it.
-            .padding(.horizontal, DetailContentLayout.horizontalInset)
+            .detailScrollContentInset()
         }
         .topFade(style: .contentMask)
     }
