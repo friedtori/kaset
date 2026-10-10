@@ -29,6 +29,7 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
 
     @State private var overflow = CarouselShelfOverflow()
     @State private var pager = HomeItemShelfPager()
+    @State private var hover = CarouselShelfHover()
 
     init(
         accessibilityLabel: String,
@@ -66,6 +67,7 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
                 playlistPlayAction: self.playlistPlayAction,
                 contextMenu: self.contextMenu.map { menu in { item, index in AnyView(menu(item, index)) } },
                 overflow: self.$overflow,
+                hover: self.hover,
                 pager: self.pager
             )
             .frame(height: HomeItemCell.height)
@@ -75,7 +77,8 @@ struct HomeItemShelfSection<Header: View, MenuContent: View>: View {
                 showsTrailing: self.overflow.trailing,
                 controlVerticalAlignment: .center,
                 contentInset: self.contentInset,
-                page: { self.pager.page($0) }
+                page: { self.pager.page($0) },
+                hover: self.hover
             ))
         }
     }
@@ -126,6 +129,7 @@ struct HomeItemCollectionShelf: NSViewRepresentable {
     let playlistPlayAction: (HomeSectionItem) -> (() -> Void)?
     let contextMenu: ((HomeSectionItem, Int) -> AnyView)?
     @Binding var overflow: CarouselShelfOverflow
+    let hover: CarouselShelfHover
     let pager: HomeItemShelfPager
 
     /// Forwarded into the hosted play overlay and context menu so they see the
@@ -155,6 +159,11 @@ struct HomeItemCollectionShelf: NSViewRepresentable {
         view.onOverflowChange = { overflow in
             if overflow != self.overflow {
                 self.overflow = overflow
+            }
+        }
+        view.onHoverChange = { [hover] isHovering in
+            if isHovering != hover.isHovering {
+                hover.isHovering = isHovering
             }
         }
         view.apply(HomeItemShelfView.Configuration(
@@ -191,6 +200,9 @@ final class HomeItemShelfView: NSObject {
     static let pageFraction: CGFloat = 0.85
 
     var onOverflowChange: ((CarouselShelfOverflow) -> Void)?
+    /// Pointer entered or left the shelf (drives the paging controls' prominence).
+    var onHoverChange: ((Bool) -> Void)?
+    private var isPointerInside = false
 
     let scrollView = NSScrollView()
     private let documentView = HomeItemShelfDocumentView()
@@ -220,7 +232,19 @@ final class HomeItemShelfView: NSObject {
         super.init()
 
         self.documentView.hoverHandler = { [weak self] point in
-            self?.updateHover(at: point)
+            guard let self else { return }
+            self.updateHover(at: point)
+            self.setPointerInside(point != nil)
+        }
+        self.documentView.windowHandler = { [weak self] hasWindow in
+            guard let self else { return }
+            if hasWindow {
+                self.refreshHoverFromMouseLocation()
+            } else {
+                // A shelf detached while hovered never receives `mouseExited`.
+                self.updateHover(at: nil)
+                self.setPointerInside(false)
+            }
         }
         self.documentView.clickHandler = { [weak self] index, isLikeControl in
             if isLikeControl {
@@ -458,7 +482,22 @@ final class HomeItemShelfView: NSObject {
     private func refreshHoverFromMouseLocation() {
         guard let window = self.scrollView.window else { return }
         let point = self.documentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        self.updateHover(at: self.documentView.visibleRect.contains(point) ? point : nil)
+        // The tracking area is active only in the key window, so no
+        // `mouseExited` would clear hover resolved while the window is not key.
+        let inside = window.isKeyWindow && self.documentView.visibleRect.contains(point)
+        self.updateHover(at: inside ? point : nil)
+        self.setPointerInside(inside)
+    }
+
+    private func setPointerInside(_ inside: Bool) {
+        guard inside != self.isPointerInside else { return }
+        self.isPointerInside = inside
+        // May run while SwiftUI is attaching or laying out the representable;
+        // deliver on the next turn rather than mid-update, like overflow.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.onHoverChange?(self.isPointerInside)
+        }
     }
 
     // MARK: Overflow + paging
@@ -539,6 +578,8 @@ private final class ObservationTick {
 @MainActor
 private final class HomeItemShelfDocumentView: NSView {
     var hoverHandler: ((NSPoint?) -> Void)?
+    /// Called with whether the view is now in a window.
+    var windowHandler: ((Bool) -> Void)?
     /// `(index, isLikeControl)`.
     var clickHandler: ((Int, Bool) -> Void)?
     var cells: [HomeItemCell] = []
@@ -559,6 +600,11 @@ private final class HomeItemShelfDocumentView: NSView {
 
     func cellIndex(at point: NSPoint) -> Int? {
         self.cells.firstIndex { $0.frame.contains(point) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        self.windowHandler?(self.window != nil)
     }
 
     override func updateTrackingAreas() {

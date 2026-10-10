@@ -15,6 +15,7 @@ struct CarouselShelf<Content: View>: View {
     private let content: () -> Content
 
     @State private var scrollPosition = ScrollPosition(edge: .leading)
+    @State private var hover = CarouselShelfHover()
     /// Raw geometry lives in a plain reference box so per-pixel horizontal
     /// scroll updates don't invalidate the shelf body; only the derived
     /// overflow flags below are SwiftUI state, and they change rarely.
@@ -74,8 +75,12 @@ struct CarouselShelf<Content: View>: View {
             showsTrailing: self.showsControls && self.overflow.trailing,
             controlVerticalAlignment: self.controlVerticalAlignment,
             contentInset: self.contentInset,
-            page: self.page(in:)
+            page: self.page(in:),
+            hover: self.hover
         ))
+        .onHover { isHovering in
+            self.hover.isHovering = isHovering
+        }
     }
 
     private func page(in direction: CarouselShelfDirection) {
@@ -95,6 +100,19 @@ struct CarouselShelf<Content: View>: View {
     }
 }
 
+// MARK: - CarouselShelfHover
+
+/// Whether the pointer is over a shelf, set by the shelf itself: SwiftUI
+/// `.onHover` for ``CarouselShelf``, the AppKit tracking area for
+/// ``HomeItemCollectionShelf`` (SwiftUI re-hit-tests every hover responder on
+/// each scroll frame while content moves under the pointer). Observable, so a
+/// change re-renders only the paging controls, not the shelf content.
+@MainActor
+@Observable
+final class CarouselShelfHover {
+    var isHovering = false
+}
+
 // MARK: - CarouselShelfPagingControls
 
 /// The glass paging arrows, their hover/focus prominence, and the shelf's
@@ -107,8 +125,8 @@ struct CarouselShelfPagingControls: ViewModifier {
     let controlVerticalAlignment: VerticalAlignment
     let contentInset: CGFloat
     let page: (CarouselShelfDirection) -> Void
+    let hover: CarouselShelfHover
 
-    @State private var isShelfHovering = false
     @FocusState private var focusedDirection: CarouselShelfDirection?
     @Environment(\.layoutDirection) private var layoutDirection
 
@@ -133,15 +151,12 @@ struct CarouselShelfPagingControls: ViewModifier {
             .animation(AppAnimation.quick, value: self.showsLeading)
             .animation(AppAnimation.quick, value: self.showsTrailing)
             .animation(AppAnimation.quick, value: self.hasControlProminence)
-            .onHover { isHovering in
-                self.isShelfHovering = isHovering
-            }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(self.accessibilityLabel)
     }
 
     private var hasControlProminence: Bool {
-        self.isShelfHovering || self.focusedDirection != nil
+        self.hover.isHovering || self.focusedDirection != nil
     }
 
     private func controlButton(for direction: CarouselShelfDirection) -> some View {
