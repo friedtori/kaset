@@ -108,9 +108,9 @@
             </parameter>
         </command>
 
-        <command name="remove from queue" code="Kastremq" description="Remove every occurrence of a video from the queue by its YouTube video ID.">
+        <command name="remove from queue" code="Kastremq" description="Remove every occurrence of a video from the queue by its YouTube video ID, except the one that is playing.">
             <cocoa class="KasetRemoveFromQueueCommand"/>
-            <direct-parameter type="text" description="The YouTube video ID to remove."/>
+            <direct-parameter type="text" description="The YouTube video ID to remove, or the audioVideoId reported by get play queue."/>
         </command>
 
     </suite>
