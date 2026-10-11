@@ -23,7 +23,7 @@ Kaset supports AppleScript for automation with tools like Raycast, Alfred, and S
 | `play track at index N` | Play a specific track from the queue by its index (1-based index) |
 | `play videos {"id1", "id2"} [starting at N]` | Replace the queue with these video IDs and start playing at a 1-based index (default 1) |
 | `add to queue {"id1", "id2"} [with next]` | Append video IDs to the queue, or insert them after the current track `with next` |
-| `remove from queue "id"` | Remove every occurrence of a video ID from the queue |
+| `remove from queue "id"` | Remove every occurrence of a video ID from the queue, except the one playing |
 
 ## Examples
 
@@ -144,9 +144,11 @@ end tell
 *Notes:*
 
 - *Queued videos start as ID-only entries titled "Loading..." and get their title, artist and artwork filled in shortly afterwards, the same as `play video`.*
-- *`play videos` uses the same 1-based indexing as `play track at index`. An empty list raises error `-1700`; an out-of-range `starting at` raises error `-1728`. If shuffle is on, the starting video plays first and the rest of the list is shuffled, as when starting a playlist.*
-- *`add to queue` never starts playback, even when the queue is empty. `next` is a boolean parameter, so write `with next` (or `next true`).*
-- *`remove from queue` removes every copy of the video and raises error `-1728` if the queue does not contain it.*
+- *Video IDs are the 11-character IDs from YouTube URLs (letters, digits, `-` and `_`). Surrounding whitespace is ignored; anything else, such as a full URL, raises error `-1700`.*
+- *`play videos` uses the same 1-based indexing as `play track at index`. An empty list raises error `-1700`; an out-of-range `starting at` raises error `-1728`. If shuffle is on, the starting video plays first and the rest of the list is shuffled, as when starting a playlist. If Smart Shuffle is on, suggested tracks are also mixed into the queue, so turn it off when the exact order matters.*
+- *`play videos` replaces the queue before it returns, so the commands that follow it act on the new queue even if the video has not started yet.*
+- *`add to queue` never starts playback, even when the queue is empty. `next` is a boolean parameter, so write `with next` (or `next true`). When nothing is playing, the video at the current position (the first one, for a new queue) counts as the current track: `play` starts the queue there, `with next` inserts after it, and `next track` skips past it.*
+- *`remove from queue` removes every copy of the video and raises error `-1728` if the queue does not contain it. It also matches the `audioVideoId` reported by `get play queue`. The copy that is playing is never removed; if it is the only match, the command raises error `-10000`.*
 
 ## Shell Usage
 

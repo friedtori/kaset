@@ -107,7 +107,7 @@ extension ScriptCommandsTests {
         #expect(playerService.currentIndex == 0)
     }
 
-    @Test("PlayVideos yields to playback that starts before its reservation is claimed")
+    @Test("PlayVideos does not start playback once newer playback has begun")
     func playVideosYieldsToNewerPlaybackIntent() async {
         let playerService = PlayerService()
         await playerService.playQueue([TestFixtures.makeSong(id: "existing")], startingAt: 0)
@@ -120,11 +120,109 @@ extension ScriptCommandsTests {
         // Newer playback begins before the scripting task runs on the main actor.
         _ = playerService.beginMusicPlaybackIntent()
 
-        let replaced = await self.waitUntil(timeout: .milliseconds(200)) {
-            playerService.queue.map(\.videoId) != ["existing"]
+        let started = await self.waitUntil(timeout: .milliseconds(200)) {
+            playerService.currentTrack?.videoId != "existing"
         }
-        #expect(!replaced)
-        #expect(playerService.queue.map(\.videoId) == ["existing"])
+        #expect(!started)
+        #expect(playerService.queue.map(\.videoId) == ["v1", "v2"])
+        #expect(playerService.currentTrack?.videoId == "existing")
+    }
+
+    @Test("PlayVideos replaces the queue before later scripting commands run")
+    func playVideosReplacesQueueBeforeLaterCommands() async {
+        let playerService = PlayerService()
+        await playerService.playQueue([
+            TestFixtures.makeSong(id: "old1"),
+            TestFixtures.makeSong(id: "old2"),
+        ], startingAt: 0)
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+
+        // Nothing suspends between these commands, as when a client sends them without waiting
+        // for replies, so the later commands run before `play videos` starts playback.
+        let playVideos = PlayVideosCommand()
+        playVideos.directParameter = ["v1", "v2", "v3"] as NSArray
+        playVideos.arguments = ["startingAt": 2 as NSNumber]
+        _ = playVideos.performDefaultImplementation()
+        #expect(playerService.queue.map(\.videoId) == ["v1", "v2", "v3"])
+
+        let addNext = AddToQueueCommand()
+        addNext.directParameter = ["n1"] as NSArray
+        addNext.arguments = ["next": true as NSNumber]
+        _ = addNext.performDefaultImplementation()
+
+        let remove = RemoveFromQueueCommand()
+        remove.directParameter = "v3" as NSString
+        _ = remove.performDefaultImplementation()
+
+        #expect(playVideos.scriptErrorNumber == 0)
+        #expect(addNext.scriptErrorNumber == 0)
+        #expect(remove.scriptErrorNumber == 0)
+        #expect(playerService.queue.map(\.videoId) == ["v1", "v2", "n1"])
+
+        let started = await self.waitUntil {
+            playerService.currentTrack?.videoId == "v2" && playerService.activePlaybackQueueIndex == 1
+        }
+        #expect(started)
+        #expect(playerService.queue.map(\.videoId) == ["v1", "v2", "n1"])
+    }
+
+    @Test("PlayVideos followed by play track at index plays the requested track of the new queue")
+    func playVideosThenPlayTrackAtIndex() async {
+        let playerService = PlayerService()
+        await playerService.playQueue([TestFixtures.makeSong(id: "old")], startingAt: 0)
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+
+        let playVideos = PlayVideosCommand()
+        playVideos.directParameter = ["v1", "v2", "v3"] as NSArray
+        _ = playVideos.performDefaultImplementation()
+
+        let playTrack = PlayTrackAtIndexCommand()
+        playTrack.directParameter = 3 as NSNumber
+        _ = playTrack.performDefaultImplementation()
+
+        #expect(playTrack.scriptErrorNumber == 0)
+        let started = await self.waitUntil {
+            playerService.currentTrack?.videoId == "v3" && playerService.activePlaybackQueueIndex == 2
+        }
+        #expect(started)
+        #expect(playerService.queue.map(\.videoId) == ["v1", "v2", "v3"])
+    }
+
+    @Test("PlayVideos with shuffle on plays the starting video first and shuffles the rest")
+    func playVideosWithShuffleStartsAtRequestedVideo() async {
+        let playerService = PlayerService()
+        playerService.shuffleMode = .on
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+
+        let videoIds = ["v1", "v2", "v3", "v4", "v5"]
+        let command = PlayVideosCommand()
+        command.directParameter = videoIds as NSArray
+        command.arguments = ["startingAt": 3 as NSNumber]
+        _ = command.performDefaultImplementation()
+
+        #expect(command.scriptErrorNumber == 0)
+        #expect(playerService.queue.first?.videoId == "v3")
+        #expect(playerService.queue.map(\.videoId).sorted() == videoIds)
+        #expect(playerService.currentIndex == 0)
+        let started = await self.waitUntil { playerService.currentTrack?.videoId == "v3" }
+        #expect(started)
+    }
+
+    @Test("PlayVideos trims whitespace around video IDs")
+    func playVideosTrimsWhitespace() {
+        let playerService = PlayerService()
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+
+        let command = PlayVideosCommand()
+        command.directParameter = [" v1", "v2\n"] as NSArray
+        _ = command.performDefaultImplementation()
+
+        #expect(command.scriptErrorNumber == 0)
+        #expect(playerService.queue.map(\.videoId) == ["v1", "v2"])
     }
 
     // MARK: - AddToQueueCommand Tests
@@ -152,6 +250,7 @@ extension ScriptCommandsTests {
         _ = command.performDefaultImplementation()
 
         #expect(command.scriptErrorNumber == errAECoercionFail)
+        #expect(command.scriptErrorString?.contains("non-empty list") == true)
         #expect(playerService.queue.isEmpty)
     }
 
@@ -232,6 +331,32 @@ extension ScriptCommandsTests {
         #expect(playerService.isPlaying == false)
     }
 
+    @Test("Play starts a queue built by add to queue at its first video")
+    func playStartsIdleQueueAtFirstVideo() async {
+        let playerService = PlayerService()
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+
+        let append = AddToQueueCommand()
+        append.directParameter = ["v1", "v2"] as NSArray
+        _ = append.performDefaultImplementation()
+        let addNext = AddToQueueCommand()
+        addNext.directParameter = ["n1"] as NSArray
+        addNext.arguments = ["next": true as NSNumber]
+        _ = addNext.performDefaultImplementation()
+        #expect(playerService.queue.map(\.videoId) == ["v1", "n1", "v2"])
+
+        let play = PlayCommand()
+        _ = play.performDefaultImplementation()
+
+        #expect(play.scriptErrorNumber == 0)
+        let started = await self.waitUntil {
+            playerService.currentTrack?.videoId == "v1" && playerService.activePlaybackQueueIndex == 0
+        }
+        #expect(started)
+        #expect(playerService.queue.map(\.videoId) == ["v1", "n1", "v2"])
+    }
+
     // MARK: - RemoveFromQueueCommand Tests
 
     @Test("RemoveFromQueue sets error when PlayerService is nil")
@@ -248,7 +373,7 @@ extension ScriptCommandsTests {
 
     @Test(
         "RemoveFromQueue rejects missing, empty, or non-string video ID",
-        arguments: [InvalidScriptParameter.missing, .emptyString, .number]
+        arguments: [InvalidScriptParameter.missing, .emptyString, .whitespaceOnly, .url, .number]
     )
     func removeFromQueueRejectsInvalidVideoId(parameter: InvalidScriptParameter) {
         let playerService = PlayerService()
@@ -284,6 +409,67 @@ extension ScriptCommandsTests {
         #expect(playerService.currentTrack?.videoId == "a")
     }
 
+    @Test("RemoveFromQueue keeps the playing copy of the video")
+    func removeFromQueueKeepsPlayingCopy() async {
+        let playerService = PlayerService()
+        await playerService.playQueue([
+            TestFixtures.makeSong(id: "a"),
+            TestFixtures.makeSong(id: "dup"),
+            TestFixtures.makeSong(id: "b"),
+            TestFixtures.makeSong(id: "dup"),
+        ], startingAt: 1)
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+        #expect(playerService.activePlaybackQueueIndex == 1)
+
+        let command = RemoveFromQueueCommand()
+        command.directParameter = "dup" as NSString
+        _ = command.performDefaultImplementation()
+
+        #expect(command.scriptErrorNumber == 0)
+        #expect(playerService.queue.map(\.videoId) == ["a", "dup", "b"])
+        #expect(playerService.currentTrack?.videoId == "dup")
+        #expect(playerService.activePlaybackQueueIndex == 1)
+    }
+
+    @Test("RemoveFromQueue sets error when only the playing video matches")
+    func removeFromQueueSetsErrorForPlayingVideo() async {
+        let playerService = PlayerService()
+        await playerService.playQueue([
+            TestFixtures.makeSong(id: "a"),
+            TestFixtures.makeSong(id: "b"),
+        ], startingAt: 0)
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+
+        let command = RemoveFromQueueCommand()
+        command.directParameter = "a" as NSString
+        _ = command.performDefaultImplementation()
+
+        #expect(command.scriptErrorNumber == errAEEventFailed)
+        #expect(command.scriptErrorString?.contains("playing") == true)
+        #expect(playerService.queue.map(\.videoId) == ["a", "b"])
+        #expect(playerService.activePlaybackQueueIndex == 0)
+    }
+
+    @Test("RemoveFromQueue matches the audio recording ID reported by get play queue")
+    func removeFromQueueMatchesAudioVideoId() async {
+        let playerService = PlayerService()
+        await playerService.playQueue([
+            TestFixtures.makeSong(id: "a"),
+            Song(id: "mv", title: "Music Video", artists: [], videoId: "mv", audioTrackVideoId: "atv"),
+        ], startingAt: 0)
+        PlayerService.shared = playerService
+        defer { PlayerService.shared = nil }
+
+        let command = RemoveFromQueueCommand()
+        command.directParameter = "atv" as NSString
+        _ = command.performDefaultImplementation()
+
+        #expect(command.scriptErrorNumber == 0)
+        #expect(playerService.queue.map(\.videoId) == ["a"])
+    }
+
     @Test("RemoveFromQueue sets error when the video is not in the queue")
     func removeFromQueueSetsErrorWhenMissing() async {
         let playerService = PlayerService()
@@ -308,8 +494,11 @@ enum InvalidScriptParameter: CaseIterable {
     case missing
     case emptyList
     case emptyString
+    case whitespaceOnly
+    case url
     case listWithEmptyString
     case listWithNonString
+    case listWithURL
     case number
 
     var value: Any? {
@@ -317,8 +506,11 @@ enum InvalidScriptParameter: CaseIterable {
         case .missing: nil
         case .emptyList: [] as NSArray
         case .emptyString: "" as NSString
+        case .whitespaceOnly: "  " as NSString
+        case .url: "https://music.youtube.com/watch?v=dQw4w9WgXcQ" as NSString
         case .listWithEmptyString: ["v1", ""] as NSArray
         case .listWithNonString: ["v1", 2] as NSArray
+        case .listWithURL: ["v1", "https://youtu.be/dQw4w9WgXcQ"] as NSArray
         case .number: 5 as NSNumber
         }
     }
