@@ -361,6 +361,7 @@ struct PlayerBar: View { // swiftlint:disable:this type_body_length
             } else {
                 PlayerBarTimelineLane(
                     seekController: self.seekController,
+                    segments: self.progressSegments,
                     accent: Self.brandAccent
                 )
                 .padding(.top, 18)

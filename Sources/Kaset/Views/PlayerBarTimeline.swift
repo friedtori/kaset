@@ -36,7 +36,7 @@ final class PlayerBarSeekController {
     }
 
     func progressDidChange(_ progress: TimeInterval, duration: TimeInterval) {
-        self.hold.reconcile(observedProgress: progress)
+        self.reconcileHold(observedProgress: progress)
         let displayProgress = self.displayProgress(observedProgress: progress)
 
         if !self.isSeeking, !self.hold.isActive, duration > 0 {
@@ -51,7 +51,7 @@ final class PlayerBarSeekController {
     }
 
     func durationDidChange(_ duration: TimeInterval, progress: TimeInterval) {
-        self.hold.reconcile(observedProgress: progress)
+        self.reconcileHold(observedProgress: progress)
         let displayProgress = self.displayProgress(observedProgress: progress)
         if !self.isSeeking, !self.hold.isActive, duration > 0 {
             self.seekValue = displayProgress / duration
@@ -66,6 +66,11 @@ final class PlayerBarSeekController {
     func scrub(to fraction: Double) {
         self.isSeeking = true
         self.seekValue = fraction
+    }
+
+    /// Ends a drag that never reached `performSeek`, e.g. because the lane was removed mid-drag.
+    func cancelScrub() {
+        self.isSeeking = false
     }
 
     /// Performs the actual seek operation after slider interaction ends.
@@ -106,6 +111,16 @@ final class PlayerBarSeekController {
         let displayProgress = self.displayProgress(observedProgress: playerService.progress)
         self.seekValue = duration > 0 ? displayProgress / duration : 0
         self.updateFormattedTimes(progress: displayProgress, duration: duration)
+    }
+
+    /// Reconciles a copy so observers are only notified when the hold actually changes;
+    /// calling a mutating method on the stored property notifies on every progress tick.
+    private func reconcileHold(observedProgress: TimeInterval) {
+        var hold = self.hold
+        hold.reconcile(observedProgress: observedProgress)
+        if hold != self.hold {
+            self.hold = hold
+        }
     }
 
     private func updateFormattedTimes(progress: TimeInterval, duration: TimeInterval) {
@@ -167,14 +182,14 @@ final class PlayerBarSeekController {
 /// `PlayerService.progress`, so each playback tick re-evaluates just this lane.
 struct PlayerBarTimelineLane: View {
     let seekController: PlayerBarSeekController
+    /// Built by `PlayerBar`, which only re-evaluates when duration or the tracklist change.
+    let segments: [PlayerBarProgressSegment]
     let accent: Color
 
     @Environment(PlayerService.self) private var playerService
-    @Environment(NowPlayingTracklistProvider.self) private var tracklistProvider: NowPlayingTracklistProvider?
 
     var body: some View {
         let duration = self.playerService.duration
-        let segments = self.segments
         let isSeeking = self.seekController.isSeeking
         let fraction = self.seekController.displayFraction(
             progress: self.playerService.progress,
@@ -190,7 +205,7 @@ struct PlayerBarTimelineLane: View {
             remainingText: isSeeking
                 ? "-\(PlayerBarSeekController.formatTime(max(0, duration - self.seekController.seekValue * duration)))"
                 : self.seekController.formattedRemaining,
-            segments: segments,
+            segments: self.segments,
             isLive: self.playerService.isCurrentItemLive,
             canSeek: PlayerBarSeekController.canSeek(self.playerService),
             isLoading: self.isLoading,
@@ -208,24 +223,21 @@ struct PlayerBarTimelineLane: View {
             self.seekController.durationDidChange(newValue, progress: self.playerService.progress)
         }
         // Covers playback ticks and local scrub/seek/hold transitions alike.
-        .onChange(of: fraction) { _, _ in
-            self.updateCurrentSegment()
+        .onChange(of: fraction) { _, newValue in
+            self.seekController.updateCurrentSegment(fraction: newValue, segments: self.segments)
         }
-        .onChange(of: segments.map(\.id)) { _, _ in
+        // Compares whole segments, not just IDs: boundaries move when the duration changes.
+        .onChange(of: self.segments) { _, _ in
             self.updateCurrentSegment()
         }
         .onAppear {
             self.seekController.syncFromDisplayedProgress(playerService: self.playerService)
             self.updateCurrentSegment()
         }
-    }
-
-    private var segments: [PlayerBarProgressSegment] {
-        PlayerBarSeekController.progressSegments(
-            tracklist: self.tracklistProvider?.tracklist,
-            duration: self.playerService.duration,
-            isLive: self.playerService.isCurrentItemLive
-        )
+        .onDisappear {
+            // Removing the lane mid-drag (ad, error) cancels its gesture without `onCommit`.
+            self.seekController.cancelScrub()
+        }
     }
 
     private var isLoading: Bool {

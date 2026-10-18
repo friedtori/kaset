@@ -11,6 +11,16 @@ final class MiniPlayerSeekState {
     var seekValue: Double = 0
     var isSeeking = false
     var hold = PlayerBarSeekHold()
+
+    /// Reconciles a copy so observers are only notified when the hold actually changes;
+    /// calling a mutating method on the stored property notifies on every progress tick.
+    func reconcileHold(observedProgress: TimeInterval) {
+        var hold = self.hold
+        hold.reconcile(observedProgress: observedProgress)
+        if hold != self.hold {
+            self.hold = hold
+        }
+    }
 }
 
 // MARK: - MiniPlayerSeekSection
@@ -48,13 +58,13 @@ struct MiniPlayerSeekSection: View {
             .overlay { WindowDragHandle() }
         }
         .onChange(of: self.playerService.progress) { _, newValue in
-            self.state.hold.reconcile(observedProgress: newValue)
+            self.state.reconcileHold(observedProgress: newValue)
             if !self.state.isSeeking, !self.state.hold.isActive, self.playerService.duration > 0 {
                 self.state.seekValue = self.displayedPlaybackProgress / self.playerService.duration
             }
         }
         .onChange(of: self.playerService.duration) { _, _ in
-            self.state.hold.reconcile(observedProgress: self.playerService.progress)
+            self.state.reconcileHold(observedProgress: self.playerService.progress)
             if !self.state.isSeeking, !self.state.hold.isActive {
                 self.syncSeekValue()
             }
@@ -69,6 +79,10 @@ struct MiniPlayerSeekSection: View {
         }
         .onAppear {
             self.syncSeekValue()
+        }
+        .onDisappear {
+            // A panel switch mid-drag can remove the slider before it reports the end of editing.
+            self.state.isSeeking = false
         }
     }
 
