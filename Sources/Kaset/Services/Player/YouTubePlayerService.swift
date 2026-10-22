@@ -63,6 +63,10 @@ extension YouTubeWatchWebView: YouTubeWatchPlaybackControlling {
 @MainActor
 @Observable
 final class YouTubePlayerService {
+    /// Shared instance for AppleScript access, set once in `KasetApp.init()`.
+    /// Scripting treats `nil` as "no video player" rather than an error.
+    static var shared: YouTubePlayerService?
+
     // MARK: - State
 
     /// The video currently loaded for playback (nil when playback is closed).
