@@ -359,6 +359,8 @@ final class YouTubePlayerService {
         self.watchActivityGeneration += 1 // a new watch began
         self.currentWatchConcluded = false
         self.isIdentityReloadInFlight = false
+        // The previous video's ad state must not carry over until the new page reports.
+        self.isShowingAd = false
         self.resetPerVideoState()
         if let normalizedStartAt {
             self.pendingExplicitStartTarget = ExplicitStartTarget(
@@ -851,6 +853,7 @@ final class YouTubePlayerService {
         self.watchActivityGeneration += 1
         self.currentWatchConcluded = false
         self.isIdentityReloadInFlight = false
+        self.isShowingAd = false
         self.resetPerVideoState()
         self.beginPlaybackLoading()
         self.playbackController.prepare(
