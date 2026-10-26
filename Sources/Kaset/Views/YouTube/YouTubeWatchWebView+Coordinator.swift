@@ -48,8 +48,9 @@ extension YouTubeWatchWebView {
         ) {
             let update = YouTubePlayerService.PlaybackUpdate(
                 isPlaying: body["isPlaying"] as? Bool ?? false,
-                progress: body["progress"] as? Double ?? 0,
-                duration: body["duration"] as? Double ?? 0,
+                // Non-finite values would make `get player info` JSON serialization fail.
+                progress: SingletonPlayerWebView.finitePlaybackBridgeDouble(from: body["progress"]) ?? 0,
+                duration: SingletonPlayerWebView.finitePlaybackBridgeDouble(from: body["duration"]) ?? 0,
                 hasReadyMedia: body["hasReadyMedia"] as? Bool ?? false,
                 hasMediaError: body["hasMediaError"] as? Bool ?? false,
                 videoId: (body["videoId"] as? String).flatMap { $0.isEmpty ? nil : $0 },
